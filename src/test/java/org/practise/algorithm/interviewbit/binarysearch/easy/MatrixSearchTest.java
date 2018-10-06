@@ -22,7 +22,7 @@ public class MatrixSearchTest {
 
         ArrayList<ArrayList<Integer>> matrix2dList = twoDArrayToList(matrix);
         int result = matrixSearch.searchMatrix(matrix2dList, 94);
-        Assert.assertEquals(result, matrix);
+        Assert.assertEquals(result, 1);
     }
 
     private ArrayList<ArrayList<Integer>> twoDArrayToList(int[][] twoDArray) {

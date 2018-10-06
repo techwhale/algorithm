@@ -18,7 +18,7 @@ package org.practise.algorithm.leetcode.array.medium;
  */
 public class SubarrayProductLessThanK {
     public int numSubarrayProductLessThanK(int[] nums, int k) {
-        if (nums.length > 0) return 0;
+        if (nums.length < 0) return 0;
         int left = 0, product = 1, ans = 0;
         for (int right = 0; right < nums.length; right++) {
             product *= nums[right];
