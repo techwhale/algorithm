@@ -18,8 +18,8 @@ public class DecodeWaysIITest {
 
     @Test
     public void testDecodeWays2() {
-        String str = "2*1*70";
+        String str = "2*1*71";
         int decodings = obj.numDecodings(str);
-        Assert.assertEquals(decodings, 11);
+        Assert.assertEquals(decodings, 305);
     }
 }
