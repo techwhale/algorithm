@@ -1,11 +1,11 @@
 package org.practise.algorithm.leetcode.dynamicprogramming.hard;
 
-import org.practise.algorithm.leetcode.contest.SwimInRisingWater;
+import org.practise.algorithm.leetcode.priorityqueue.SwimInRisingWater;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
 public class SwimInRisingWaterTest {
-    private org.practise.algorithm.leetcode.contest.SwimInRisingWater obj = new SwimInRisingWater();
+    private SwimInRisingWater obj = new SwimInRisingWater();
 
     @Test
     public void testSwimInRisingWater() {
