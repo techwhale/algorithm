@@ -1,5 +1,6 @@
 package org.practise.algorithm.leetcode.interestingsolution;
 
+import org.practise.algorithm.interestingideas.StockSpanner;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 

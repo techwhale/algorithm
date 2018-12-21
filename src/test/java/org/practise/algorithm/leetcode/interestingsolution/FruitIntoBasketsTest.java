@@ -1,6 +1,6 @@
 package org.practise.algorithm.leetcode.interestingsolution;
 
-import org.practise.algorithm.leetcode.interestingsolution.FruitIntoBaskets;
+import org.practise.algorithm.interestingideas.FruitIntoBaskets;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 

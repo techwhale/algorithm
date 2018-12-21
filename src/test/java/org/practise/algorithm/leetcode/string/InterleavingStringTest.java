@@ -1,9 +1,8 @@
 package org.practise.algorithm.leetcode.string;
 
+import org.practise.algorithm.leetcode.string.hard.InterleavingString;
 import org.testng.Assert;
 import org.testng.annotations.Test;
-
-import static org.testng.Assert.*;
 
 public class InterleavingStringTest {
     InterleavingString obj = new InterleavingString();

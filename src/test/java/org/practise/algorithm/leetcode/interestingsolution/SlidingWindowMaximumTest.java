@@ -1,11 +1,10 @@
 package org.practise.algorithm.leetcode.interestingsolution;
 
+import org.practise.algorithm.interestingideas.SlidingWindowMaximum;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
 import java.util.Arrays;
-
-import static org.testng.Assert.*;
 
 public class SlidingWindowMaximumTest {
     private SlidingWindowMaximum obj = new SlidingWindowMaximum();

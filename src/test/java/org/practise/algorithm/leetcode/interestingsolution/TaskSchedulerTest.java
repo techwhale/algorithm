@@ -1,9 +1,8 @@
 package org.practise.algorithm.leetcode.interestingsolution;
 
+import org.practise.algorithm.interestingideas.TaskScheduler;
 import org.testng.Assert;
 import org.testng.annotations.Test;
-
-import static org.testng.Assert.*;
 
 public class TaskSchedulerTest {
     private TaskScheduler obj = new TaskScheduler();

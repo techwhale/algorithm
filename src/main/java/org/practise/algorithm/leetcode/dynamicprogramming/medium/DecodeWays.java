@@ -21,14 +21,25 @@ package org.practise.algorithm.leetcode.dynamicprogramming.medium;
  * Explanation: It could be decoded as "BZ" (2 26), "VF" (22 6), or "BBF" (2 2 6).
  */
 public class DecodeWays {
-    int numDecodings(String s) {
-        int p = 1, pp = 0, n = s.length();
-        for(int i=n-1;i>=0;i--) {
-            int cur = s.charAt(i) == '0' ? 0 : p;
-            if(i<n-1 && (s.charAt(i) =='1'||s.charAt(i)=='2'&&s.charAt(i + 1)<'7')) cur += pp;
-            pp = p;
-            p = cur;
+    int numDecodings(String str) {
+        if (str == null || str.isEmpty() || str.startsWith("0")) return 0;
+        int p = 1, pp = 1;
+        int previousDigit = str.charAt(0) - '0';
+        for (int i = 1; i < str.length(); i++) {
+            int currentDigit = str.charAt(i) - '0';
+            if (currentDigit == 0)  {
+                p = 0;
+            }
+            int value = previousDigit * 10 + currentDigit;
+            if (10 <= value && value <= 26) {
+                p += pp;
+                pp = p - pp;
+            } else {
+                pp = p;
+            }
+            previousDigit = currentDigit;
         }
-        return s.isEmpty()? 0 : p;
+        return p;
     }
+
 }

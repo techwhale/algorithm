@@ -1,5 +1,7 @@
 package org.practise.algorithm.leetcode.string.hard;
 
+import java.util.HashMap;
+
 /**
  * Given a string s1, we may represent it as a binary tree by partitioning it to two non-empty substrings recursively.
  *
@@ -48,23 +50,39 @@ package org.practise.algorithm.leetcode.string.hard;
  * Output: false
  */
 public class ScrambleString {
+//    public boolean isScramble(String s1, String s2) {
+//        if (s1.equals(s2)) return true;
+//        final int length = s1.length();
+//
+//        int[] letters = new int[26];
+//
+//        for (int i = 0; i < length; i++) {
+//            letters[s1.charAt(i) - 'a']++;
+//            letters[s2.charAt(i) - 'a']--;
+//        }
+//
+//        for (int i = 0; i < 26; i++) if (letters[i] != 0) return false;
+//
+//        for (int i = 1; i < length; i++) {
+//            if (isScramble(s1.substring(0, i), s2.substring(0, i)) && isScramble(s1.substring(i), s2.substring(i))) return true;
+//            if (isScramble(s1.substring(0, i), s2.substring(length - i)) && isScramble(s1.substring(i), s2.substring(0, length - i))) return true;
+//        }
+//        return false;
+//    }
+
     public boolean isScramble(String s1, String s2) {
+        int len = s1.length();
+        if (len != s2.length()) return false;
         if (s1.equals(s2)) return true;
-        final int length = s1.length();
-
-        int[] letters = new int[26];
-
-        for (int i = 0; i < length; i++) {
-            letters[s1.charAt(i) - 'a']++;
-            letters[s2.charAt(i) - 'a']--;
-        }
-
-        for (int i = 0; i < 26; i++) if (letters[i] != 0) return false;
-
-        for (int i = 1; i < length; i++) {
-            if (isScramble(s1.substring(0, i), s2.substring(0, i)) && isScramble(s1.substring(i), s2.substring(i))) return true;
-            if (isScramble(s1.substring(0, i), s2.substring(length - i)) && isScramble(s1.substring(i), s2.substring(0, length - i))) return true;
-        }
-        return false;
+        boolean [][][] F = new boolean[len][len][len + 1];
+        for (int k = 1; k <= len; ++k)
+            for (int i = 0; i + k <= len; ++i)
+                for (int j = 0; j + k <= len; ++j)
+                    if (k == 1)
+                        F[i][j][k] = s1.charAt(i) == s2.charAt(j);
+                    else for (int q = 1; q < k && !F[i][j][k]; ++q) {
+                        F[i][j][k] = (F[i][j][q] && F[i + q][j + q][k - q]) || (F[i][j + k - q][q] && F[i + q][j][k - q]);
+                    }
+        return F[0][0][len];
     }
 }
