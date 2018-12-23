@@ -1,8 +1,4 @@
 package org.practise.algorithm.leetcode.practice;
-
-import java.util.ArrayDeque;
-import java.util.Deque;
-
 /**
  * Write an iterator that iterates through a run-length encoded sequence.
  *

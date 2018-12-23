@@ -10,6 +10,8 @@ public class ScrambleStringTest {
 
     @Test
     public void testScrambleString() {
-        Assert.assertTrue(obj.isScramble("great", "rgeat"));
+        // Assert.assertTrue(obj.isScramble("great", "rgeat"));
+        Assert.assertTrue(obj.isScramble("abc", "bac"));
+
     }
 }

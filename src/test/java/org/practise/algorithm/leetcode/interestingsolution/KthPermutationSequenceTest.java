@@ -1,6 +1,6 @@
 package org.practise.algorithm.leetcode.interestingsolution;
 
-import org.practise.algorithm.leetcode.interestingsolution.KthPermutationSequence;
+import org.practise.algorithm.interestingideas.KthPermutationSequence;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
