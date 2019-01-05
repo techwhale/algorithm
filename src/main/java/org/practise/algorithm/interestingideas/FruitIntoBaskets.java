@@ -1,8 +1,6 @@
 package org.practise.algorithm.interestingideas;
 
-import java.util.Deque;
 import java.util.HashMap;
-import java.util.LinkedList;
 
 /**
  * In a row of trees, the i-th tree produces fruit with type tree[i].
