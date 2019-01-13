@@ -24,7 +24,7 @@ import java.util.Queue;
  *              the order of elements returned by next should be: [1,4,6].
  */
 public class FlattenNestedListIterator {
-    public interface NestedInteger {
+    private interface NestedInteger {
         // @return true if this NestedInteger holds a single integer, rather than a nested list.
         public boolean isInteger();
 
