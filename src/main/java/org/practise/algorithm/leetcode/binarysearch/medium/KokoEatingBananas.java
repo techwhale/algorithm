@@ -34,28 +34,28 @@ package org.practise.algorithm.leetcode.binarysearch.medium;
  * 1 <= piles[i] <= 10^9
  */
 public class KokoEatingBananas {
-    public int minEatingSpeed(int[] piles, int H) {
-        int minPiles = 1, maxPiles = 0;
+    public int minEatingSpeed(int[] piles, int h) {
+        int minSpeed = 1;
+        int maxSpeed = 1;
         for (int pile : piles) {
-            maxPiles= Math.max(maxPiles, pile);
+            maxSpeed = Math.max(maxSpeed, pile);
         }
-        while (minPiles < maxPiles) {
-            int midPiles = (maxPiles + minPiles) / 2;
-            ;
-            if (! isEatingPossible(piles, H, midPiles)) {
-                minPiles = midPiles + 1;
+        while (minSpeed < maxSpeed) {
+            int midSpeed = (minSpeed + maxSpeed)/2;
+            if (!canEatAllBananas(piles, h, midSpeed)) {
+                minSpeed = midSpeed + 1;
             } else {
-                maxPiles = midPiles;
+                maxSpeed = midSpeed;
             }
         }
-        return minPiles;
+        return maxSpeed;
     }
 
-    private boolean isEatingPossible(int[] piles, int hour, int avgPileConsumption) {
-        int hoursNeeded = 0;
+    public boolean canEatAllBananas(int[] piles, int hour, int eatingSpeed) {
+        int hoursTaken = 0;
         for (int pile : piles) {
-            hoursNeeded += (pile - 1)/avgPileConsumption  + 1;
+            hoursTaken += Math.ceil((double) pile/eatingSpeed);
         }
-        return hoursNeeded <= hour;
+        return hoursTaken <= hour;
     }
 }
