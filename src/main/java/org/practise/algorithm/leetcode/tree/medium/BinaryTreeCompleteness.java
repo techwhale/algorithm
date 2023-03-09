@@ -1,5 +1,7 @@
 package org.practise.algorithm.leetcode.tree.medium;
 
+import org.practise.algorithm.pojo.TreeNode;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -56,16 +58,4 @@ public class BinaryTreeCompleteness {
             this.code = code;
         }
     }
-
-    // Definition for a binary tree node.
-    public class TreeNode {
-        int val;
-        TreeNode left;
-        TreeNode right;
-
-        TreeNode(int x) {
-            val = x;
-        }
-    }
-
 }

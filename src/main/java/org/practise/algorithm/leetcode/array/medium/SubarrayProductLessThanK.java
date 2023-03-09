@@ -22,7 +22,7 @@ public class SubarrayProductLessThanK {
         int left = 0, product = 1, ans = 0;
         for (int right = 0; right < nums.length; right++) {
             product *= nums[right];
-            while (product >= k) {product = product / nums[left++]; }
+            while (product >= k && left <= right) {product = product / nums[left++]; }
             ans += right - left + 1;
         }
         return ans;
