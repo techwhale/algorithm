@@ -17,16 +17,17 @@ Explanation: transactions = [buy, sell, cooldown, buy, sell]
  */
 public class BuySellStockWithCoolDown {
     public int maxProfit(int[] prices) {
-        if (prices == null || prices.length <= 1) return 0;
-        int b0 = -prices[0], b1 = b0;
-        int s0 = 0, s1 = 0, s2 = 0;
-        for (int i = 1; i < prices.length; i++) {
-            s0 = Math.max(s1, b1 + prices[i]);
-            b0 = Math.max(b1, s2 - prices[i]);
-            s2 = s1;
-            s1 = s0;
-            b1 = b0;
+        int buy = Integer.MIN_VALUE;
+        int sell = 0;
+        int cooldown = 0;
+        for (int i = 0; i < prices.length; i++) {
+            int prevBuy = buy;
+            int prevSell = sell;
+            int prevCoolDown = cooldown;
+            buy = Math.max(buy, prevCoolDown - prices[i]);
+            sell = Math.max(prevSell, prevBuy + prices[i]);
+            cooldown = Math.max(prevCoolDown, prevSell);
         }
-        return s0;
+        return Math.max(cooldown, sell);
     }
 }

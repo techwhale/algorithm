@@ -3,6 +3,8 @@ package org.practise.algorithm.leetcode.array.medium;
 import java.util.Arrays;
 
 /**
+ 910. Smallest Range II
+
  Given an array A of integers, for each integer A[i] we need to choose either x = -K or x = K, and add x to A[i] (only once).
 
  After this process, we have some array B.
