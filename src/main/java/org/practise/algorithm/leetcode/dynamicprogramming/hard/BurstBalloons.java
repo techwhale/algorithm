@@ -1,6 +1,10 @@
 package org.practise.algorithm.leetcode.dynamicprogramming.hard;
 
+import java.util.Arrays;
+
 /**
+ * 312. Burst Balloons
+ *
  * Given n balloons, indexed from 0 to n-1. Each balloon is painted with a number on it represented by array nums.
  * You are asked to burst all the balloons. If the you burst balloon i you will get nums[left] * nums[i] * nums[right] coins.
  * Here left and right are adjacent indices of i. After the burst, the left and right then becomes adjacent.
@@ -20,48 +24,36 @@ package org.practise.algorithm.leetcode.dynamicprogramming.hard;
  */
 
 public class BurstBalloons {
-    public int maxCoins(int[] iNums) {
-        int[] nums = new int[iNums.length + 2];
-        int n = 1;
-        for (int x : iNums) if (x > 0) nums[n++] = x;
-        nums[0] = nums[n++] = 1;
+    public int maxCoins(int[] nums) {
+        int n = nums.length + 2;
+        int[] newNums = new int[n];
+        System.arraycopy(nums, 0, newNums, 1, n - 2);
+        newNums[0] = newNums[n - 1] = 1; // adjust corner cases
 
+        int[][] memo = new int[n][n];
+        for (int i = 0; i < n; i++){
+            Arrays.fill(memo[i], -1);
+        }
 
-        int[][] dp = new int[n][n];
-        for (int k = 2; k < n; ++k)
-            for (int left = 0; left < n - k; ++left) {
-                int right = left + k;
-                for (int i = left + 1; i < right; ++i)
-                    dp[left][right] = Math.max(dp[left][right],
-                            nums[left] * nums[i] * nums[right] + dp[left][i] + dp[i][right]);
-            }
-
-        return dp[0][n - 1];
+        return dp(newNums, memo, 1, n - 2);
     }
 
-//    public int maxCoins(int[] iNums) {
-//        final int N = iNums.length;
-//        List<Integer> nums = new ArrayList<>();
-//        for (int num : iNums) {
-//            nums.add(num);
-//        }
-//        return burstBalloons(nums);
-//    }
-//
-//    private int burstBalloons(List<Integer> nums) {
-//        int maxCoins = 0;
-//        if (nums.size() == 1) {
-//            return nums.get(0);
-//        } else {
-//            for (int i = 0; i < nums.size(); i++) {
-//                int left = i == 0 ? 1 :  nums.get(i - 1);
-//                int right = i ==  nums.size() -  1 ?  1 : nums.get(i + 1);
-//
-//                List<Integer> temp = new ArrayList<>(nums);
-//                temp.remove(i);
-//                maxCoins = Math.max(maxCoins , left * right * nums.get(i) + burstBalloons(temp));
-//            }
-//        }
-//        return maxCoins;
-//    }
+    private int dp(int[] nums, int[][] memo, int left, int right) {
+        if (right - left < 0) {
+            return 0;
+        }
+
+        if (memo[left][right] != -1) {
+            return memo[left][right];
+        }
+
+        int maxCoins = 0;
+        for (int i = left; i <= right; i++) {
+            int collected = nums[left - 1] * nums[i] * nums[right + 1];
+            int remaining = dp(nums, memo, left, i - 1) + dp(nums, memo, i + 1, right);
+            maxCoins = Math.max(maxCoins, collected + remaining);
+        }
+        memo[left][right] = maxCoins;
+        return maxCoins;
+    }
 }

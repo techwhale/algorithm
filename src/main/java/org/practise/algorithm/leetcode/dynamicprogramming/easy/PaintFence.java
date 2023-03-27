@@ -1,6 +1,8 @@
 package org.practise.algorithm.leetcode.dynamicprogramming.easy;
 
 /**
+ * 276. Paint Fence
+ *
  * There is a fence with n posts, each post can be painted with one of the k colors.
  *
  * You have to paint all the posts such that no more than two adjacent fence posts have the same color.
@@ -36,4 +38,17 @@ public class PaintFence {
         }
         return sameColor + differentColor;
     }
+
+
+//    Map<Integer, Integer> map = new HashMap<>();
+//    public int numWays(int n, int k) {
+//        if (n == 1) return k;
+//        if (n == 2) return k * k;
+//
+//        if (map.containsKey(n)) {
+//            return map.get(n);
+//        }
+//        map.put(n, (k - 1) * (numWays(n - 1, k) + numWays(n - 2, k)));
+//        return map.get(n);
+//    }
 }
