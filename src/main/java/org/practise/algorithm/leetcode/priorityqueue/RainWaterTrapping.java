@@ -35,12 +35,7 @@ public class RainWaterTrapping {
         if (heightMap == null || heightMap.length < 1 || heightMap[0].length < 1) {
             return 0;
         }
-        PriorityQueue<int[]> pq = new PriorityQueue(new Comparator<int[]>() {
-            @Override
-            public int compare(int[] a, int[] b) {
-                return a[2] - b[2];
-            }
-        });
+        PriorityQueue<int[]> pq = new PriorityQueue((Comparator<int[]>) (a, b) -> a[2] - b[2]);
         int row = heightMap.length, col = heightMap[0].length;
         boolean[][] visited = new boolean[row][col];
         for (int i = 0; i < row; i++) {
