@@ -1,8 +1,6 @@
 package org.practise.algorithm.interviewbit.backtracking;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 /**
  * Given a collection of candidate numbers (C) and a target number (T), find all unique combinations in C where the candidate numbers sums to T.
@@ -53,6 +51,32 @@ public class CombinationSumII {
             tempList.remove(tempList.size() - 1);
             while (i < list.size() - 1 && list.get(i) == list.get(i + 1))
                 i++;
+        }
+    }
+
+    public List<List<Integer>> combinationSum2(int[] candidates, int target) {
+        List<List<Integer>> result = new ArrayList<>();
+        Arrays.sort(candidates);
+        backtrack(0, target, candidates, new LinkedList<>(), result);
+        return result;
+    }
+
+    private void backtrack(int index, int target, int[] candidates, LinkedList<Integer> current, List<List<Integer>> result){
+        if (target == 0) {
+            result.add(new ArrayList<>(current));
+        }
+        if (target < 0 || index == candidates.length) {
+            return;
+        }
+
+        for (int i = index; i < candidates.length; i++) {
+            if (i > index && candidates[i] == candidates[i - 1]) {
+                continue;
+            }
+
+            current.add(candidates[i]);
+            backtrack(i + 1, target - candidates[i], candidates, current, result);
+            current.removeLast();
         }
     }
 }
