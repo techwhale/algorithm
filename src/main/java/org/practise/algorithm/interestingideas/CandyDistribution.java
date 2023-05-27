@@ -48,31 +48,4 @@ public class CandyDistribution {
 
         return total_candies;
     }
-
-//    // https://leetcode.com/problems/candy/solution/
-//    public int candy(int[] ratings) {
-//        int N = ratings.length;
-//        if (N <= 1) return N;
-//        int up = 0, down = 0, previous_slope = 0, current_slope = 0, candies = 0;
-//        for (int i = 1; i < N; i++) {
-//            current_slope = ratings[i - 1] < ratings[i] ? 1 : (ratings[i - 1] > ratings[i] ? -1 : 0);
-//            if ((previous_slope > 0 && current_slope == 0) || (previous_slope < 0 && current_slope >= 0)) {
-//                candies += count(up) + count(down) + Math.max(up, down);
-//                up = 0;
-//                down = 0;
-//            }
-//
-//            if (current_slope > 0) up++;
-//            if (current_slope < 0) down++;
-//            if (current_slope == 0) candies += 1;
-//
-//            previous_slope = current_slope;
-//        }
-//        candies += count(up) + count(down) + Math.max(up, down) + 1;
-//        return candies;
-//    }
-//
-//    private int count(int n) {
-//        return (n * (n + 1)/ 2);
-//    }
 }

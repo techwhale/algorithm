@@ -3,6 +3,8 @@ package org.practise.algorithm.leetcode.array.medium;
 import java.util.*;
 
 /**
+ * 452. Minimum Number of Arrows to Burst Balloons
+ *
  * There are a number of spherical balloons spread in two-dimensional space. For each balloon, provided input is the start and end coordinates
  * of the horizontal diameter. Since it's horizontal, y-coordinates don't matter and hence the x-coordinates of start and end of the diameter suffice.
  * Start is always smaller than end. There will be at most 104 balloons.
@@ -24,24 +26,27 @@ import java.util.*;
  */
 public class MinimumNumberOfArrowsToBurstBalloons {
     public int findMinArrowShots(int[][] points) {
-        if (points == null || points.length < 1 || points[0] == null || points[0].length < 1) {
+        if (points == null || points.length == 0) {
             return 0;
         }
-        Arrays.sort(points, new NarrowRangeFirstSorter());
-        long arrowsNeeded = 0, lastRightMax = Long.MIN_VALUE;
-        for (int i = 0; i < points.length; i++) {
-            int[] point = points[i];
-            if (lastRightMax < point[0]) {
-                arrowsNeeded++;
-                lastRightMax = point[1];
+        Arrays.sort(points, new RangeSorter());
+        int minArrows = 1;
+        int maxRightPoint = points[0][1];
+        for (int i = 1; i < points.length; i++) {
+            if (points[i][0] > maxRightPoint) {
+                minArrows++;
+                maxRightPoint = points[i][1];
             }
         }
-        return  (int) arrowsNeeded;
+        return minArrows;
     }
 
-    class NarrowRangeFirstSorter implements Comparator<int[]> {
+    class RangeSorter implements Comparator<int[]> {
         public int compare(int[] a, int[] b) {
-            return  a[1] - b[1];
+            // avoid overflow
+            if (a[1] == b[1]) return 0;
+            else if (a[1] < b[1]) return -1;
+            else return 1;
         }
     }
 }

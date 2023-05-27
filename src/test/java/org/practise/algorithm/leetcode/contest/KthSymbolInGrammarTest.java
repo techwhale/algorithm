@@ -1,9 +1,8 @@
 package org.practise.algorithm.leetcode.contest;
 
+import org.practise.algorithm.leetcode.recursion.KthSymbolInGrammar;
 import org.testng.Assert;
 import org.testng.annotations.Test;
-
-import static org.testng.Assert.*;
 
 public class KthSymbolInGrammarTest {
     private KthSymbolInGrammar obj = new KthSymbolInGrammar();

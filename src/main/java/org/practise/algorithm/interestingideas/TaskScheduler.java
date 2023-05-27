@@ -3,6 +3,8 @@ package org.practise.algorithm.interestingideas;
 import java.util.Arrays;
 
 /**
+ * 621. Task Scheduler
+ *
  * Given a char array representing tasks CPU need to do. It contains capital letters A to Z where different letters represent different tasks.
  * Tasks could be done without original order. Each task could be done in one interval. For each interval, CPU could finish one task or just be idle.
  *

@@ -3,6 +3,8 @@ package org.practise.algorithm.interestingideas;
 import java.util.Stack;
 
 /**
+ * 901. Online Stock Span
+ *
  * Write a class StockSpanner which collects daily price quotes for some stock, and returns the span of that stock's price for the current day.
  *
  * The span of the stock's price today is defined as the maximum number of consecutive days
@@ -38,21 +40,17 @@ import java.util.Stack;
  * The total time limit for this problem has been reduced by 75% for C++, and 50% for all other languages.
  */
 public class StockSpanner {
-    Stack<Integer> price;
-    Stack<Integer> weight;
+    Stack<int[]> stack;
     public StockSpanner() {
-        price = new Stack<>();
-        weight = new Stack<>();
+        stack = new Stack<>();
     }
 
     public int next(int price) {
         int weight = 1;
-        while (! this.weight.isEmpty() && price >= this.price.peek()) {
-            weight += this.weight.pop();
-            this.price.pop();
+        while (!stack.isEmpty() && price >= stack.peek()[0]) {
+            weight += stack.pop()[1];
         }
-        this.price.push(price);
-        this.weight.push(weight);
+        stack.push(new int[]{price, weight});
         return weight;
     }
 }

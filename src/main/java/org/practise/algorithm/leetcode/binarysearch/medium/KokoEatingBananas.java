@@ -1,6 +1,8 @@
 package org.practise.algorithm.leetcode.binarysearch.medium;
 
 /**
+ * 875. Koko Eating Bananas
+ *
  * Koko loves to eat bananas.  There are N piles of bananas, the i-th pile has piles[i] bananas.
  * The guards have gone and will come back in H hours.
  *

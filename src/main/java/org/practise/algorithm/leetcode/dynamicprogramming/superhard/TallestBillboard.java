@@ -42,7 +42,7 @@ public class TallestBillboard {
         // "memo[n][x]" will be stored at memo[n][5000+x]
         // Using Integer for default value null
         memo = new Integer[N][43];
-        return (int) dp(rods, 0, 21);
+        return dp(rods, 0, 21);
     }
 
     private int dp(int[] rods, int i, int s) {

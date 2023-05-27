@@ -50,74 +50,51 @@ import java.util.*;
  * There may be multiple valid order of letters, return any one of them is fine.
  */
 public class AlienDictionary {
-    private final int MAX_CHARACTER = 26;
     public String alienOrder(String[] words) {
-        Set<Character> uniqueCharacters = getUniqueCharacters(words);
-        List<Prerequisite> prerequisites = generatePrerequisites(words);
+        Map<Character, Integer> counts = new HashMap<Character, Integer>();
+        Map<Character, List<Character>> adjList = new HashMap<>();
 
-        int[][] matrix = new int[MAX_CHARACTER][MAX_CHARACTER];
-        int[] indegree = new int[MAX_CHARACTER];
-
-        for (Prerequisite p : prerequisites) {
-            if (matrix[p.required - 'a'][p.ch - 'a'] == 0) {
-                indegree[p.ch - 'a']++;
-            }
-            matrix[p.required - 'a'][p.ch - 'a'] = 1;
-        }
-
-        String result = "";
-        Queue<Integer> queue = new LinkedList<>();
-        for (int i = 0; i < MAX_CHARACTER; i++) {
-            if (uniqueCharacters.contains((char) (i + 'a')) && indegree[i] == 0) {
-                queue.offer(i);
+        for (String word : words) {
+            for (char c : word.toCharArray()) {
+                counts.put(c, 0);
+                adjList.put(c, new ArrayList<>());
             }
         }
 
-        while (! queue.isEmpty()) {
-            int c = queue.poll();
-            result += (char) (c + 'a');
-            for (int i = 0; i < MAX_CHARACTER; i++) {
-                if (matrix[c][i] == 1) {
-                    if (--indegree[i] == 0) {
-                        queue.offer(i);
-                    }
-                }
+        for (int i = 0; i < words.length - 1; i++) {
+            String curr = words[i];
+            String next = words[i + 1];
+
+            if (curr.length() > next.length() && curr.startsWith(next)){
+                return "";
             }
-        }
-
-        return result.length() == uniqueCharacters.size() ? result : "";
-    }
-
-    private List<Prerequisite> generatePrerequisites(String[] words) {
-        List<Prerequisite> prerequisiteList = new ArrayList<>();
-        for (int i = 1; i < words.length; i++) {
-            String word = words[i];
-            for (int position = 0; position < word.length(); position++) {
-                if (position < words[i - 1].length() && word.charAt(position) != words[i - 1].charAt(position)) {
-                    prerequisiteList.add(new Prerequisite(word.charAt(position), words[i - 1].charAt(position)));
+            for (int j = 0; j < Math.min(curr.length(), next.length()); j++) {
+                if (curr.charAt(j) != next.charAt(j)){
+                    adjList.get(curr.charAt(j)).add(next.charAt(j));
+                    counts.put(next.charAt(j), counts.get(next.charAt(j)) + 1);
                     break;
                 }
             }
         }
-        return prerequisiteList;
-    }
 
-    private Set<Character> getUniqueCharacters(String[] words) {
-        Set<Character> uniqueCharacters = new HashSet<>();
-        for (String word : words) {
-            for (int i = 0; i < word.length(); i++) {
-                uniqueCharacters.add(word.charAt(i));
+        Queue<Character> queue = new LinkedList<>();
+        for (char c : counts.keySet()) {
+            if (counts.get(c).equals(0)) {
+                queue.offer(c);
             }
         }
-        return uniqueCharacters;
-    }
 
-    private class Prerequisite {
-        char ch;
-        char required;
-        public Prerequisite(char ch, char required) {
-            this.ch = ch;
-            this.required = required;
+        StringBuilder builder = new StringBuilder();
+        while (!queue.isEmpty()) {
+            char c = queue.poll();
+            builder.append(c);
+            for (char next : adjList.get(c)){
+                counts.put(next, counts.get(next) - 1);
+                if (counts.get(next).equals(0)) {
+                    queue.add(next);
+                }
+            }
         }
+        return builder.length() != counts.size() ? "" :  builder.toString();
     }
 }
