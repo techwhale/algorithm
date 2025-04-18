@@ -18,7 +18,6 @@ package org.practise.algorithm.leetcode.array.medium;
  */
 public class NextPermutation {
     public void nextPermutation(int[] nums) {
-        int N = nums.length;
         int swapPosition = findSwappablePosition(nums);
         if (swapPosition >= 0) {
             swap(nums, swapPosition);

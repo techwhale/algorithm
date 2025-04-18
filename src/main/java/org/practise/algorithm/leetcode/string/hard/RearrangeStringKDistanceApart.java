@@ -31,12 +31,7 @@ public class RearrangeStringKDistanceApart {
             mapCharacterCount.put(ch, mapCharacterCount.getOrDefault(ch, 0) + 1);
         }
 
-        PriorityQueue<Map.Entry<Character, Integer>> pq = new PriorityQueue<>(new Comparator<Map.Entry<Character, Integer>>() {
-            @Override
-            public int compare(Map.Entry<Character, Integer> a, Map.Entry<Character, Integer> b) {
-                return b.getValue()  - a.getValue();
-            }
-        });
+        PriorityQueue<Map.Entry<Character, Integer>> pq = new PriorityQueue<>((a, b) -> b.getValue()  - a.getValue());
 
         pq.addAll(mapCharacterCount.entrySet());
         Queue<Map.Entry<Character, Integer>> waitQueue = new LinkedList<>();

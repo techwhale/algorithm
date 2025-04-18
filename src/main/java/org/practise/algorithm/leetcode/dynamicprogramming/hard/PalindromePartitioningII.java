@@ -31,36 +31,42 @@ public class PalindromePartitioningII {
     }
 
 //    O(N^3) solution
-//
-//    public int minCut(String s) {
-//        if (s == null || s.isEmpty()) return 0;
-//        int N = s.length();
-//
-//        int[][] dp = new int[N][N];
-//        for (int[] arr: dp) {
-//            Arrays.fill(arr, Integer.MAX_VALUE);
-//        }
-//
-//        for (int len = 0; len < N ; len++) {
-//            for (int i = 0; i + len < N; i++) {
-//                final int j = i + len;
-//                if (isPalindrome(s, i, j)) {
-//                    dp[i][j] = 0;
-//                } else {
-//                    for (int k = i; k < j; k++)
-//                        dp[i][j] = Math.min( 1 + dp[i][k] + dp[k + 1][j], dp[i][j]);
-//                }
-//            }
-//        }
-//        return dp[0][N - 1];
-//    }
 
-    private boolean isPalindrome(String s, int i, int j) {
-        while (i < j) {
-            if (s.charAt(i) != s.charAt(j)) return false;
-            i++;
-            j--;
+    private Integer[] memoCuts;
+    private Boolean[][] memoPalindrome;
+    public int minCut2(String s) {
+        memoCuts = new Integer[s.length()];
+        memoPalindrome = new Boolean[s.length()][s.length()];
+        return findMinimumCuts(s, 0, s.length() - 1, s.length() - 1);
+    }
+
+    private int findMinimumCuts(String s, int startIdx, int endIdx, int minimumCuts) {
+        if (startIdx == endIdx || isPalindrome(s, startIdx, endIdx)) {
+            return 0;
         }
-        return true;
+
+        if (memoCuts[startIdx] != null) {
+            return memoCuts[startIdx];
+        }
+
+        for (int cutIdx = startIdx; cutIdx < endIdx; cutIdx++) {
+            if (isPalindrome(s, startIdx, cutIdx)) {
+                minimumCuts = Math.min(minimumCuts, 1 + findMinimumCuts(s, cutIdx + 1, endIdx, minimumCuts));
+            }
+        }
+        memoCuts[startIdx] = minimumCuts;
+        return memoCuts[startIdx];
+    }
+
+
+    private boolean isPalindrome(String s, int startIdx, int endIdx) {
+        if (memoPalindrome[startIdx][endIdx] != null) {
+            return memoPalindrome[startIdx][endIdx];
+        }
+        if (startIdx >= endIdx) {
+            return true;
+        }
+        memoPalindrome[startIdx][endIdx] = ((startIdx >= endIdx) || (s.charAt(startIdx) == s.charAt(endIdx) && isPalindrome(s, startIdx + 1, endIdx - 1)));
+        return memoPalindrome[startIdx][endIdx];
     }
 }
