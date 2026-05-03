@@ -1,9 +1,6 @@
 package org.practise.algorithm.leetcode.string.medium;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Given two words (beginWord and endWord), and a dictionary's word list, find the length of shortest transformation sequence from beginWord to endWord, such that:
@@ -40,6 +37,46 @@ import java.util.Map;
  * Explanation: The endWord "cog" is not in wordList, therefore no possible transformation.
  */
 public class WordLadder {
+    // Time Complexity - O(M ^2 . N)
+    // Space complexity - O(M . N)
+    public int ladderLength2(String beginWord, String endWord, List<String> wordList) {
+        Set<String> dict = new HashSet<>(wordList);
+        Set<String> visited = new HashSet<>();
+        if (! dict.contains(endWord)) {
+            return 0;
+        }
+
+        Queue<String> queue = new LinkedList<>();
+        queue.offer(beginWord);
+        visited.add(beginWord);
+
+        int changes = 1;
+        while (! queue.isEmpty()) {
+            int size = queue.size();
+            for (int i = 0; i < size; i++) {
+                String word = queue.poll();
+
+                if (word.equals(endWord)) {
+                    return changes;
+                }
+
+
+                for (int j = 0; j < word.length(); j++) {
+                    char[] arr = word.toCharArray();
+                    for (char c = 'a'; c <= 'z'; c++) {
+                        arr[j] = c;
+                        String newWord = new String(arr);
+                        if (dict.contains(newWord) && ! visited.contains(newWord)) {
+                            queue.offer(newWord);
+                            visited.add(newWord);
+                        }
+                    }
+                }
+            }
+            changes++;
+        }
+        return 0;
+    }
     public int ladderLength(String beginWord, String endWord, List<String> wordList) {
 
         Map<String, List<String>> mapOneDiffCharacter = new HashMap<>();
