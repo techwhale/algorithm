@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
+ * 282. Expression Add Operators
+ *
  * Given a string that contains only digits 0-9 and a target value, return all possibilities to add binary operators (not unary)
  * +, -, or * between the digits so they evaluate to the target value.
  *
@@ -53,11 +55,11 @@ public class ExpressionAddOperators {
         }
 
         long current_value = 0;
-        String current_value_str = null;
+
 
         for (int i = index; i < num.length(); i++) {
             current_value = current_value * 10 + Character.getNumericValue(num.charAt(i));
-            current_value_str = Long.toString(current_value);
+            String current_value_str = Long.toString(current_value);
 
             if (index == 0) {
                 recurse(i + 1, current_value, new StringBuilder(operation).append(current_value_str), current_value);

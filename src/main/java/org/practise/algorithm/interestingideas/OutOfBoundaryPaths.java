@@ -58,4 +58,32 @@ public class OutOfBoundaryPaths {
         }
         return count;
     }
+
+    private int MOD = 1000_000_007;
+    public int findPaths2(int m, int n, int maxMove, int startRow, int startColumn) {
+        int[][][] dp = new int[m][n][maxMove + 1];
+        for (int[][] matrix: dp) {
+            for (int [] row : matrix) {
+                Arrays.fill(row, - 1);
+            }
+        }
+        return findPath(m, n, maxMove, startRow, startColumn, dp);
+
+    }
+
+    private int findPath(int m, int n, int move, int i, int j, int[][][] dp) {
+        if (i < 0 || j < 0 || i >= m || j >= n) {
+            return 1;
+        }
+        if (move == 0) {
+            return 0;
+        }
+        if (dp[i][j][move] == -1) {
+            dp[i][j][move] = (
+                    (findPath(m, n, move - 1, i + 1, j, dp) + (findPath(m, n, move - 1, i - 1, j, dp))
+                    ) % MOD +
+                            (findPath(m, n, move - 1, i, j + 1, dp) + findPath(m, n, move - 1, i, j - 1, dp)) % MOD) % MOD;
+        }
+        return dp[i][j][move];
+    }
 }

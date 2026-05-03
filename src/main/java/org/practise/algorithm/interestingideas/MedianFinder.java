@@ -40,7 +40,7 @@ public class MedianFinder {
     public MedianFinder() {
         lo = new PriorityQueue<>(new Comparator<Integer>() {
             public int compare(Integer a, Integer b) {
-                return b.intValue() - a.intValue();
+                return Integer.compare(b, a);
             }
         });
         hi = new PriorityQueue<>();

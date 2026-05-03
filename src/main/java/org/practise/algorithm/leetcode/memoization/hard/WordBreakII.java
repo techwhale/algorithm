@@ -41,7 +41,7 @@ import java.util.*;
  */
 public class WordBreakII {
     public List<String> wordBreak(String s, List<String> B) {
-        final HashSet<String> dictionary = new HashSet<>(B);
+        final Set<String> dictionary = new HashSet<>(B);
         Map<Integer,List<String>> mapPositionToWords = new HashMap<>();
         return wordBreak(s, dictionary, mapPositionToWords, 0);
     }

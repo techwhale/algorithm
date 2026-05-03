@@ -17,7 +17,7 @@ public class NextPermutationTest {
     public void testNextPermutation2() {
         final int[] nums = {1, 5, 3, 2};
         obj.nextPermutation(nums);
-        Assert.assertEquals(nums, new int[]{2, 1, 3, 5});
+        Assert.assertEquals(nums, new int[] {2, 1, 3, 5});
     }
 
     @Test
