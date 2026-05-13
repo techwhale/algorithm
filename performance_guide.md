@@ -32,6 +32,13 @@
 16. [CompletableFuture for Parallel Fan-Out](#chapter-16-completablefuture-for-parallel-fan-out)
 17. [Virtual Threads for IO-Bound Throughput](#chapter-17-virtual-threads-for-io-bound-throughput)
 18. [Classic Performance Interview Scenarios](#chapter-18-classic-performance-interview-scenarios)
+19. [JVM Profiling & Memory Leak Detection](#chapter-19-jvm-profiling--memory-leak-detection)
+
+**Part D — Advanced Performance**
+
+20. [Hibernate Query Plan Cache & PreparedStatement Cache](#chapter-20-hibernate-query-plan-cache--preparedstatement-cache)
+21. [HTTP/2 in Spring Boot](#chapter-21-http2-in-spring-boot)
+22. [GraalVM Native Image](#chapter-22-graalvm-native-image)
 
 ---
 
@@ -1722,3 +1729,541 @@ public class GCFriendlyService {
 > - **DB efficiency** — index-aware queries, projections, batching, read replicas
 > - **Async patterns** — `@Async`, `CompletableFuture` fan-out, virtual threads for IO
 > - **Lock discipline** — minimize scope, prefer lock-free, know false sharing
+
+---
+
+# Chapter 19: JVM Profiling & Memory Leak Detection
+
+---
+
+## Q24 🔴 ⭐ How do you profile a Java application in production? What tools do you use?
+
+### Plain English First
+
+When your app is slow or consuming too much memory and you can't reproduce it locally, you need to observe it **in production** with minimal overhead. The wrong tool (like a full heap dump on a 32GB heap) can cause minutes of GC pause — turning a degraded service into a full outage.
+
+```
+Tool Selection Guide:
+  CPU spike            → JFR (Java Flight Recorder) or async-profiler
+  Memory leak          → Heap dump + Eclipse MAT or VisualVM
+  Thread contention    → Thread dump (jstack) — 3 times, 10 seconds apart
+  GC pressure          → GC logs + GCEasy.io analysis
+  Unexpected slowness  → JFR (shows everything: CPU, GC, IO, locks)
+  Production profiling → JFR (< 1% overhead), async-profiler (1-3%)
+  Local profiling      → VisualVM, IntelliJ Profiler, JProfiler
+```
+
+### Java Flight Recorder (JFR) — Zero-Hero Production Profiler
+
+```bash
+# Start recording on a running JVM (no restart needed)
+jcmd <pid> JFR.start duration=60s filename=/tmp/profile.jfr
+
+# Or start at JVM launch:
+java -XX:StartFlightRecording=duration=120s,filename=/tmp/app.jfr \
+     -XX:FlightRecorderOptions=stackdepth=64 \
+     -jar app.jar
+
+# What JFR captures (< 1% overhead):
+#   - CPU usage + method profiling (sampled, not instrumented)
+#   - GC events: pause duration, cause, freed memory
+#   - Thread states: RUNNING, BLOCKED, WAITING (with stack traces)
+#   - Lock contention: which lock, which threads blocked, how long
+#   - I/O events: file reads, network calls and their latency
+#   - Heap allocation: hottest allocation sites (where memory is created)
+#   - Class loading, JIT compilation events
+
+# Analyze in JDK Mission Control (JMC):
+jmc       # GUI tool — open the .jfr file
+# Or use the CLI:
+jfr print --events CPULoad,GCHeapSummary profile.jfr
+```
+
+### async-profiler — Flame Graph Profiler
+
+```bash
+# Download and attach to running JVM (works even without JFR)
+./profiler.sh -d 30 -f flamegraph.html <pid>
+# -d 30: profile for 30 seconds
+# -f flamegraph.html: output as interactive HTML flame graph
+
+# Profile allocation (where is memory being allocated?)
+./profiler.sh -d 30 -e alloc -f alloc.html <pid>
+
+# Profile lock contention (which locks are hottest?)
+./profiler.sh -d 30 -e lock -f locks.html <pid>
+
+# Reading a flame graph:
+# X-axis = time (wider = more time spent)
+# Y-axis = call stack (bottom = main(), top = where time is actually spent)
+# Look for: wide bars near the TOP of the flame (hot methods)
+# Common findings:
+#   Wide bar: "StringConcatenation" → replace with StringBuilder
+#   Wide bar: "deserializeJSON" → optimize JSON parsing, use streaming
+#   Wide bar: "getConnection" → HikariCP pool is too small
+#   Wide bar: "GarbageCollect" → memory pressure, increase heap or fix allocations
+```
+
+---
+
+## Q25 🔴 ⭐ How do you detect and fix a memory leak in Java?
+
+### Symptoms of a Memory Leak
+
+```
+Symptoms:
+  - Heap usage climbs steadily over hours/days and never drops
+  - GC runs more frequently but frees less memory each time
+  - Eventually: OutOfMemoryError: Java heap space
+  - Old generation fills up completely (no young gen objects promoted out)
+
+Key distinction:
+  Memory leak  = objects held alive longer than needed (GC can't collect them)
+  Memory spike = temporary large allocation that IS collected after GC
+  True leak:     heap grows every hour even with no new features deployed
+```
+
+### Step-by-Step Diagnosis
+
+```bash
+# Step 1: Confirm it's a leak (not just a spike)
+# Monitor heap over time:
+jstat -gcutil <pid> 10s 60
+# Output every 10s for 60 iterations:
+# S0   S1    E    O      M     YGC  YGCT  FGC  FGCT  GCT
+# 0.00 40.12 71.5 85.3  96.4    50  1.2    3   8.7   9.9
+#                  ↑ Old generation at 85% and rising — likely a leak
+
+# Step 2: Take heap dump (causes GC pause — do during low traffic!)
+jmap -dump:format=b,live,file=/tmp/heap.hprof <pid>
+# live: only dump live objects (skip garbage — smaller dump, faster analysis)
+# Result: /tmp/heap.hprof file (can be 1-32GB for large heaps)
+
+# Step 3: Analyze with Eclipse MAT (Memory Analyzer Tool)
+# Open heap.hprof in MAT
+# Run: "Leak Suspects Report"
+# MAT shows:
+#   Largest objects by retained heap (total memory that would be freed if object deleted)
+#   Shortest path to GC root (why is this object kept alive?)
+#   Histogram: count and size of every class
+```
+
+### Common Memory Leak Patterns
+
+```java
+// Leak Pattern 1: Static collection that grows forever
+public class EventRegistry {
+    private static final List<EventListener> listeners = new ArrayList<>();
+    // ❌ listeners added but never removed → GC root holds all listeners forever
+    
+    public static void register(EventListener listener) { listeners.add(listener); }
+    // ✅ Fix: use WeakReference<EventListener> so GC can collect unreferenced listeners
+    private static final List<WeakReference<EventListener>> weakListeners = new ArrayList<>();
+}
+
+// Leak Pattern 2: ThreadLocal not cleaned up (in thread pool)
+// Covered in Chapter 15 — always call threadLocal.remove() in finally
+
+// Leak Pattern 3: Cache with no eviction
+public class ProductCache {
+    // ❌ Grows unboundedly — every product ever requested stays forever
+    private static final Map<Long, Product> cache = new HashMap<>();
+    
+    // ✅ Fix: use a bounded cache (Caffeine, LRU LinkedHashMap, or WeakHashMap)
+    private static final Cache<Long, Product> bounded = Caffeine.newBuilder()
+        .maximumSize(10_000)
+        .expireAfterWrite(1, TimeUnit.HOURS)
+        .build();
+}
+
+// Leak Pattern 4: Listener/callback registered but never unregistered
+public class EventBus {
+    private final Map<String, List<Handler>> handlers = new ConcurrentHashMap<>();
+    
+    public void subscribe(String event, Handler handler) {
+        handlers.computeIfAbsent(event, k -> new ArrayList<>()).add(handler);
+    }
+    // ❌ No unsubscribe mechanism — handler objects accumulate forever
+    
+    // ✅ Fix:
+    public void unsubscribe(String event, Handler handler) {
+        handlers.getOrDefault(event, List.of()).remove(handler);
+    }
+}
+
+// Leak Pattern 5: Hibernate/JPA session left open (entity objects not garbage collected)
+// Entities stay in persistence context (first-level cache) until session is closed
+// Fix: use @Transactional correctly, don't hold EntityManager open across requests
+```
+
+---
+
+## Q26 🟡 ⭐ How do you read GC logs? What do you look for?
+
+```bash
+# Enable GC logging (JVM flags):
+java -Xlog:gc*:file=/var/log/app/gc.log:time,uptime,level:filecount=5,filesize=20m \
+     -jar app.jar
+
+# Sample GC log output:
+# [2026-05-07T10:00:01.123][0.500s][info][gc] GC(0) Pause Young (Normal) (G1 Evacuation Pause) 128M→45M(512M) 12.345ms
+# [2026-05-07T10:00:05.678][5.055s][info][gc] GC(1) Pause Young (Normal) (G1 Evacuation Pause) 190M→52M(512M) 9.876ms
+# [2026-05-07T10:05:23.456][322.833s][info][gc] GC(15) Pause Full (Ergonomics) 450M→380M(512M) 892.345ms ← PROBLEM
+
+# What to look for:
+# Pause Young: normal minor GC — should be < 50ms
+# Pause Full:  stop-the-world full GC — should be rare, < 1 second
+#              frequent Full GC → memory leak or heap too small
+#              Full GC not freeing much (450M→380M) → leak (old gen filling up)
+
+# Frequency: Young GC every few seconds = too much short-lived allocation
+# Duration:  Young GC > 100ms = heap too small or too much live data
+
+# Online analyzer: paste your GC log into gceasy.io
+# Shows: pause time histogram, heap occupancy over time, GC cause breakdown
+# GC causes to investigate:
+#   "G1 Humongous Allocation" → object > 50% of region size (large byte[]) → refactor
+#   "Ergonomics" → JVM decided to GC proactively → usually fine
+#   "GCLocker" → JNI critical section holding GC → check JNI code
+#   "Metadata GC Threshold" → Metaspace too small → -XX:MaxMetaspaceSize=256m
+```
+
+---
+
+## Q27 🟡 ⭐ How do you use JMH for microbenchmarking? Why is it necessary?
+
+### Plain English First
+
+Naive Java benchmarks are almost always **wrong**. The JVM's JIT compiler, dead code elimination, and warm-up effects make simple `System.currentTimeMillis()` measurements meaningless. JMH (Java Microbenchmark Harness) handles all these pitfalls correctly.
+
+```java
+// ❌ WRONG — never benchmark like this:
+long start = System.nanoTime();
+for (int i = 0; i < 1_000_000; i++) {
+    String result = String.valueOf(i);  // JIT may eliminate this (result never used)
+}
+long elapsed = System.nanoTime() - start;
+// Problems:
+// 1. JIT eliminates dead code (result not used → loop optimized away)
+// 2. JVM not warmed up (first iterations are interpreted, not compiled)
+// 3. No GC isolation (GC may run during measurement)
+// 4. Clock granularity issues on some OS
+
+// ✅ CORRECT — use JMH:
+// Add to pom.xml:
+// <dependency>
+//     <groupId>org.openjdk.jmh</groupId>
+//     <artifactId>jmh-core</artifactId>
+//     <version>1.37</version>
+// </dependency>
+
+import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.infra.Blackhole;
+
+@State(Scope.Benchmark)    // One instance per benchmark run
+@BenchmarkMode(Mode.AverageTime)
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
+@Warmup(iterations = 5, time = 1)    // 5 warmup iterations (JIT kicks in)
+@Measurement(iterations = 10, time = 1) // 10 measurement iterations
+@Fork(2)                               // Run in 2 separate JVM forks (eliminates JVM state)
+public class StringBenchmark {
+
+    @Param({"10", "100", "1000"})      // Run with different input sizes
+    private int size;
+
+    @Benchmark
+    public void stringConcat(Blackhole bh) {
+        String result = "";
+        for (int i = 0; i < size; i++) {
+            result += i;               // O(n²) allocations
+        }
+        bh.consume(result);            // Blackhole: prevents dead code elimination
+    }
+
+    @Benchmark
+    public void stringBuilder(Blackhole bh) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < size; i++) {
+            sb.append(i);
+        }
+        bh.consume(sb.toString());
+    }
+}
+
+// Run:
+// java -jar benchmarks.jar StringBenchmark
+
+// Sample output:
+// Benchmark                   (size)  Mode  Cnt     Score    Error  Units
+// StringBenchmark.stringConcat    10  avgt   20   152.345 ±  3.456  ns/op
+// StringBenchmark.stringConcat  1000  avgt   20 98765.432 ± 234.5   ns/op
+// StringBenchmark.stringBuilder   10  avgt   20    45.678 ±  1.234  ns/op
+// StringBenchmark.stringBuilder 1000  avgt   20  1234.567 ±  23.4   ns/op
+// Conclusion: StringBuilder is 80× faster for size=1000
+```
+
+---
+
+# Chapter 20: Hibernate Query Plan Cache & PreparedStatement Cache
+
+---
+
+## Q28 🟡 ⭐ What is the Hibernate Query Plan Cache? What is the PreparedStatement cache? How do you tune them?
+
+```java
+// Hibernate Query Plan Cache:
+// Every time Hibernate parses a JPQL/HQL/Criteria query, it compiles it into an AST (query plan).
+// Parsing is expensive (reflection, metadata lookup). The query plan cache stores parsed plans
+// so the same JPQL string is never parsed twice in the same JVM.
+
+// application.yml — tune the query plan cache
+spring:
+  jpa:
+    properties:
+      hibernate:
+        query:
+          plan_cache_max_size: 2048           # max number of cached query plans (default: 2048)
+          plan_parameter_metadata_max_size: 128 # max cached parameter binding plans
+        # Statistics to monitor cache hit/miss:
+        generate_statistics: true             # exposes QueryPlanCache hit ratio via stats
+
+// Symptom of query plan cache miss under high load:
+// Repeated JPQL compilation shows up in CPU profiler as:
+//   org.hibernate.hql.internal.ast.HqlParser.parse()
+//   → wide bar in flame graph = too many distinct query strings being parsed
+
+// Most common cause of cache MISS: dynamic JPQL with varying IN clause sizes
+@Repository
+public class OrderRepository {
+
+    @PersistenceContext EntityManager em;
+
+    // ❌ BAD — each call generates a DIFFERENT query string (1-element, 2-element, 3-element IN clause)
+    //         Hibernate cannot reuse the plan — cache thrashes
+    public List<Order> findByStatusIn(List<String> statuses) {
+        String jpql = "SELECT o FROM Order o WHERE o.status IN (" +
+            statuses.stream().map(s -> "'" + s + "'").collect(Collectors.joining(",")) + ")";
+        return em.createQuery(jpql, Order.class).getResultList();
+    }
+
+    // ✅ GOOD — fixed query string with bind parameters; plan is cached and reused
+    public List<Order> findByStatusInSafe(List<String> statuses) {
+        return em.createQuery(
+            "SELECT o FROM Order o WHERE o.status IN :statuses", Order.class)
+            .setParameter("statuses", statuses)
+            .getResultList();
+        // Hibernate pads IN lists to powers of 2 (1,2,4,8,16...) to improve plan reuse
+    }
+}
+
+// Enable IN-list padding (Hibernate 5.2+) to maximize plan cache hits
+spring:
+  jpa:
+    properties:
+      hibernate:
+        query:
+          in_clause_parameter_padding: true   # pads IN (?,?) → IN (?,?,?,?) to power of 2
+          # Same plan reused for IN lists of size 1-2, 3-4, 5-8, 9-16, etc.
+```
+
+```java
+// JDBC PreparedStatement Cache (at the connection pool level):
+// The JDBC driver caches server-side prepared statements keyed by SQL string.
+// Avoids re-parsing and re-planning the same SQL on the DB side.
+
+// HikariCP PreparedStatement cache configuration:
+spring:
+  datasource:
+    hikari:
+      data-source-properties:
+        # PostgreSQL (pgjdbc):
+        prepareThreshold: 5             # prepare statement server-side after 5 executions
+        preparedStatementCacheQueries: 256  # cache up to 256 distinct prepared statements per connection
+        preparedStatementCacheSizeMiB: 5    # max total size of the PS cache per connection
+
+        # MySQL (Connector/J):
+        useServerPrepStmts: true
+        cachePrepStmts: true
+        prepStmtCacheSize: 250
+        prepStmtCacheSqlLimit: 2048
+
+// Monitor via HikariCP + Micrometer:
+// hikaricp.connections.active     — connections currently executing queries
+// hikaricp.connections.pending    — threads waiting to borrow connection (increase pool if > 0)
+// The PS cache is per-connection — larger pool = more cache instances but more memory
+```
+
+```
+Optimization layers summary:
+  Hibernate Query Plan Cache  → avoids JPQL re-parsing in JVM
+  JDBC PreparedStatement Cache → avoids SQL re-planning on DB server
+  DB query cache (MySQL)      → caches query RESULTS (rarely useful, disabled in MySQL 8+)
+
+  Most impactful fix: use bind parameters (not string concatenation) in all JPQL/SQL
+```
+
+---
+
+# Chapter 21: HTTP/2 in Spring Boot
+
+---
+
+## Q29 🟡 ⭐ How do you enable HTTP/2 in Spring Boot? What performance gains does it provide?
+
+```yaml
+# application.yml — enable HTTP/2
+server:
+  http2:
+    enabled: true
+  ssl:
+    key-store: classpath:keystore.p12
+    key-store-password: ${SSL_PASSWORD}
+    key-store-type: PKCS12
+    key-alias: tomcat
+  # HTTP/2 over TLS (h2) requires HTTPS — browsers enforce this
+  # HTTP/2 over cleartext (h2c) works without TLS for internal service-to-service calls
+```
+
+```java
+// HTTP/2 key performance improvements over HTTP/1.1:
+
+// 1. MULTIPLEXING: multiple requests/responses over ONE TCP connection simultaneously
+//    HTTP/1.1: browsers open 6 TCP connections per domain to parallelize requests
+//    HTTP/2:   one TCP connection, requests interleaved as binary frames
+//              → reduces connection setup overhead (TLS handshake is expensive)
+
+// 2. HEADER COMPRESSION (HPACK):
+//    HTTP/1.1 headers are plain text, repeated on every request
+//    HTTP/2 HPACK compresses headers using a shared table
+//    → 70-85% reduction in header overhead for APIs with large auth headers (JWT)
+
+// 3. SERVER PUSH: server proactively sends resources before client requests them
+//    (rarely used in REST APIs; mainly for web pages with CSS/JS dependencies)
+
+// WebClient with HTTP/2 for internal service-to-service calls (cleartext h2c):
+@Bean
+public WebClient http2WebClient() {
+    HttpClient httpClient = HttpClient.create()
+        .protocol(HttpProtocol.H2C)          // HTTP/2 cleartext (no TLS, internal only)
+        .responseTimeout(Duration.ofSeconds(5))
+        .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 2000);
+
+    return WebClient.builder()
+        .baseUrl("http://payment-service:8080")
+        .clientConnector(new ReactorClientHttpConnector(httpClient))
+        .build();
+}
+
+// HTTP/2 with RestTemplate (via OkHttp which supports h2):
+@Bean
+public RestTemplate http2RestTemplate() {
+    OkHttpClient okHttp = new OkHttpClient.Builder()
+        .protocols(List.of(Protocol.H2, Protocol.HTTP_1_1))
+        .build();
+    return new RestTemplate(new OkHttp3ClientHttpRequestFactory(okHttp));
+}
+```
+
+```
+HTTP/2 vs HTTP/1.1 benchmark (typical REST API):
+  Scenario: 100 concurrent requests, same origin
+  HTTP/1.1: 6 connections × serial requests   → ~500ms
+  HTTP/2:   1 connection × 100 multiplexed    → ~120ms (4× improvement)
+
+  Gains are most pronounced when:
+    - Many small requests to the same host (microservices, paginated APIs)
+    - Large headers (JWT Authorization headers, repeated cookie values)
+
+  No gain when:
+    - Few large responses (file downloads) — already connection-saturated
+    - Already using HTTP/1.1 keep-alive with enough parallelism
+```
+
+---
+
+# Chapter 22: GraalVM Native Image
+
+---
+
+## Q30 🔴 ⭐ What is a GraalVM Native Image? How does it improve Spring Boot startup and memory?
+
+```java
+// Native Image: ahead-of-time (AOT) compilation of the entire Spring Boot app
+// into a platform-specific native binary (no JVM at runtime)
+
+// Build with Spring Boot 3+ native support:
+// pom.xml: spring-boot-starter-parent + native Maven plugin
+// Build command: ./mvnw -Pnative native:compile
+// Or with Buildpacks (Docker): ./mvnw spring-boot:build-image -Pnative
+
+// What AOT compilation does:
+// 1. Analyzes the entire call graph at build time
+// 2. Eliminates dead code (unused classes/methods are NOT included in the binary)
+// 3. Pre-initializes the Spring application context at build time
+//    → context creation work is baked into the binary, not done at startup
+// 4. Generates reflection/proxy metadata as static initialization
+//    (Spring's dynamic proxies, AOP, @Autowired resolution are resolved at build time)
+
+// Performance comparison (typical Spring Boot REST API):
+// JVM mode:    startup ~3s, heap ~250MB, first request latency ~20ms (JIT warmup)
+// Native mode: startup ~50ms, heap ~50MB, first request latency ~1ms (no JIT needed)
+
+// Limitations and how to address them:
+
+// 1. Reflection must be declared explicitly (or Spring AOT handles it automatically)
+@RegisterReflectionForBinding({UserDto.class, OrderDto.class})  // Hint for Jackson serialization
+@Configuration
+public class NativeHints { }
+
+// 2. Custom RuntimeHints for dynamic features
+@Configuration
+@ImportRuntimeHints(MyRuntimeHints.class)
+public class AppConfig { }
+
+public class MyRuntimeHints implements RuntimeHintsRegistrar {
+    @Override
+    public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+        // Register classes needed for reflection
+        hints.reflection()
+            .registerType(CustomSerializer.class, MemberCategory.INVOKE_DECLARED_METHODS);
+
+        // Register resources (properties files, templates) included in the binary
+        hints.resources()
+            .registerPattern("templates/*.html")
+            .registerPattern("db/migration/*.sql");
+
+        // Register serialization for Jackson
+        hints.serialization()
+            .registerType(CustomEvent.class);
+    }
+}
+
+// 3. @Profile-based feature flags don't work at runtime — use @ConditionalOnProperty instead
+// (profiles are resolved at build time for native images)
+
+// application.yml for native-specific config:
+spring:
+  aot:
+    enabled: true        # Enable AOT processing at build time
+
+// Testing native compatibility during development (no full native build needed):
+// @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+// AOT test mode: java -DspringAot=true -jar app.jar
+// Simulates native constraints in JVM mode — catches reflection/proxy issues early
+```
+
+```
+When to use Native Image:
+  Serverless (AWS Lambda, Google Cloud Run)     → cold start is critical → Native ideal
+  CLI tools / batch jobs                        → short-lived processes → JIT warmup wasteful
+  High-density Kubernetes deployments           → 80% less memory per pod → fewer nodes
+  Microservices with strict SLA startup < 500ms → Native is the only option
+
+When NOT to use Native Image:
+  Long-running servers with JIT optimization    → JVM eventually faster for CPU-intensive
+  Libraries using heavy reflection/dynamic proxy → complex hints config, potential bugs
+  Teams without native build pipeline           → build times 5-15 minutes vs seconds for JVM
+  Apps using unsupported libraries              → not all libraries are native-compatible yet
+```
+
+> ⭐ **Apple interview tip**: Native Image trades runtime flexibility (no dynamic class loading, limited reflection) for deterministic startup time and lower memory footprint. Spring Boot 3.x has first-class native support via GraalVM and `spring-boot-starter-aop` AOT processing — most standard Spring features work without manual hints configuration.

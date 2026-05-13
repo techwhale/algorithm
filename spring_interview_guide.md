@@ -19,6 +19,7 @@
 11. [Spring Exception Handling](#chapter-11-spring-exception-handling)
 12. [Classic Spring Interview Scenarios](#chapter-12-classic-spring-interview-scenarios)
 13. [Hibernate — ORM Deep Dive](#chapter-13-hibernate--orm-deep-dive)
+14. [Missing Interview Topics — Transactions, Security, CORS, REST Clients, JPA Deep Dive](#chapter-14-missing-interview-topics--transactions-security-cors-rest-clients-jpa-deep-dive)
 
 ---
 
@@ -3193,6 +3194,637 @@ private List<Order> orders;
 | Pessimistic locking mechanism | SELECT ... FOR UPDATE |
 | Dirty checking | Hibernate auto-detects changes and generates UPDATE |
 | Best inheritance strategy | JOINED for clean schema; SINGLE_TABLE for performance |
+
+---
+
+---
+
+# Chapter 14: Missing Interview Topics — Transactions, Security, CORS, REST Clients, JPA Deep Dive
+
+---
+
+## Q45 🔴 ⭐ What are all @Transactional propagation levels? When do you use each?
+
+```java
+// REQUIRED (default): join existing tx; create new one if none exists
+@Transactional(propagation = Propagation.REQUIRED)
+public void placeOrder(Order order) {
+    inventoryService.reserve(order);   // joins the same transaction
+    paymentService.charge(order);      // joins the same transaction
+    // If either throws, entire tx rolls back
+}
+
+// REQUIRES_NEW: suspend outer tx, open a brand-new independent tx
+// Use case: audit log that MUST be committed even if the outer tx rolls back
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public void writeAudit(String event) {
+    auditRepository.save(new AuditEntry(event));
+    // Commits independently — outer tx rollback does NOT affect this
+}
+
+// NESTED: savepoint within the outer tx; inner rollback rolls back to savepoint only
+// Use case: partial rollback — try an operation; if it fails, continue outer tx
+@Transactional(propagation = Propagation.NESTED)
+public void tryOptionalEnrichment(Order order) {
+    enrichmentRepository.save(order);  // if this rolls back, outer tx continues
+}
+
+// SUPPORTS: use existing tx if present; otherwise run non-transactionally
+@Transactional(propagation = Propagation.SUPPORTS)
+public List<Product> listProducts() { return productRepository.findAll(); }
+
+// NOT_SUPPORTED: suspend existing tx and run without a transaction
+// Use case: methods that must never hold a db connection (long-running computation)
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
+public byte[] generateHeavyReport() { /* CPU-intensive, no DB write */ }
+
+// MANDATORY: must be called within an existing transaction, else exception
+@Transactional(propagation = Propagation.MANDATORY)
+public void internalStepRequiringTx() {
+    // Throws IllegalTransactionStateException if called without active tx
+}
+
+// NEVER: must NOT be called within an active transaction, else exception
+@Transactional(propagation = Propagation.NEVER)
+public void noTransactionAllowed() {
+    // Throws IllegalTransactionStateException if a tx is active
+}
+```
+
+```
+Propagation comparison:
+  REQUIRED       → join or create            ← most common for writes
+  REQUIRES_NEW   → always new, suspend outer  ← audit log, independent commit
+  NESTED         → savepoint in outer tx      ← partial rollback within a tx
+  SUPPORTS       → join if present            ← read methods
+  NOT_SUPPORTED  → suspend outer, no tx       ← long non-DB computation
+  MANDATORY      → outer must exist           ← internal service methods
+  NEVER          → outer must NOT exist       ← non-transactional boundaries
+```
+
+---
+
+## Q46 🔴 ⭐ What are @Transactional isolation levels? What anomalies does each prevent?
+
+```java
+// Isolation anomalies:
+// Dirty Read       — reading uncommitted data from another transaction
+// Non-Repeatable   — same row returns different values in same transaction
+// Phantom Read     — same query returns different rows in same transaction
+
+@Transactional(isolation = Isolation.READ_UNCOMMITTED)
+// Allows dirty reads, non-repeatable reads, phantom reads
+// Fastest, least safe. Rarely used in production.
+
+@Transactional(isolation = Isolation.READ_COMMITTED)  // PostgreSQL default
+// Prevents dirty reads
+// Allows non-repeatable reads and phantom reads
+public void reportGeneration() { /* reads only committed data */ }
+
+@Transactional(isolation = Isolation.REPEATABLE_READ)  // MySQL InnoDB default
+// Prevents dirty reads + non-repeatable reads
+// Allows phantom reads
+// Same row read twice → always returns same data within the transaction
+public void balanceCheck(Long accountId) {
+    Account a1 = accountRepo.findById(accountId);  // reads 100
+    // another tx commits update to 200
+    Account a2 = accountRepo.findById(accountId);  // still reads 100 (repeatable)
+}
+
+@Transactional(isolation = Isolation.SERIALIZABLE)
+// Prevents all anomalies: dirty reads, non-repeatable reads, phantom reads
+// Transactions execute as if sequential — highest contention, slowest
+// Use for: financial reconciliation, inventory atomic check-and-decrement
+public void processPayment(Long orderId) { /* fully isolated */ }
+```
+
+```
+Isolation level comparison:
+  Level               | Dirty Read | Non-Repeatable | Phantom
+  READ_UNCOMMITTED    |    YES     |      YES       |   YES
+  READ_COMMITTED      |    NO      |      YES       |   YES   ← default in PG
+  REPEATABLE_READ     |    NO      |      NO        |   YES   ← default in MySQL
+  SERIALIZABLE        |    NO      |      NO        |   NO    ← safest, slowest
+```
+
+> ⭐ **Interview tip**: Most Spring apps use `READ_COMMITTED` (the DB default). Escalate to `REPEATABLE_READ` or `SERIALIZABLE` only where data consistency requires it, since they increase lock contention. For optimistic locking, prefer `@Version` + `READ_COMMITTED` over `SERIALIZABLE`.
+
+---
+
+## Q47 🟡 ⭐ How do you configure CORS in Spring Boot? What is the difference between @CrossOrigin and global CORS config?
+
+```java
+// Option 1: @CrossOrigin on controller/method (per-endpoint)
+@RestController
+@RequestMapping("/api/products")
+@CrossOrigin(
+    origins = {"https://app.example.com", "https://admin.example.com"},
+    methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.DELETE},
+    allowedHeaders = {"Authorization", "Content-Type"},
+    exposedHeaders = {"X-Total-Count"},
+    allowCredentials = "true",
+    maxAge = 3600  // pre-flight cache in seconds
+)
+public class ProductController { }
+
+// Option 2: Global CORS via WebMvcConfigurer (applies to all endpoints)
+@Configuration
+public class CorsConfig implements WebMvcConfigurer {
+
+    @Override
+    public void addCorsMappings(CorsRegistry registry) {
+        registry.addMapping("/api/**")
+            .allowedOrigins("https://app.example.com")
+            .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+            .allowedHeaders("*")
+            .exposedHeaders("X-Total-Count", "X-Request-Id")
+            .allowCredentials(true)
+            .maxAge(3600);
+
+        registry.addMapping("/public/**")
+            .allowedOrigins("*")   // Open for public endpoints
+            .allowedMethods("GET");
+    }
+}
+
+// Option 3: CorsConfigurationSource bean — REQUIRED when Spring Security is present
+// Security's filter chain processes requests BEFORE DispatcherServlet,
+// so WebMvcConfigurer CORS is ignored unless you also configure it at the security layer.
+@Bean
+public CorsConfigurationSource corsConfigurationSource() {
+    CorsConfiguration config = new CorsConfiguration();
+    config.setAllowedOrigins(List.of("https://app.example.com"));
+    config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+    config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+    config.setAllowCredentials(true);
+    config.setMaxAge(3600L);
+
+    UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+    source.registerCorsConfiguration("/**", config);
+    return source;
+}
+
+// Wire into SecurityFilterChain:
+@Bean
+public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    http
+        .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+        .csrf(csrf -> csrf.disable())
+        ...
+    return http.build();
+}
+```
+
+---
+
+## Q48 🟡 ⭐ What is HandlerInterceptor? How is it different from a Servlet Filter?
+
+```java
+// Filter: operates at the Servlet level (before DispatcherServlet)
+//   - Has access to raw HttpServletRequest/Response
+//   - Runs for ALL requests (static resources, actuator endpoints, etc.)
+//   - Use for: authentication token extraction, request logging, GZIP wrapping
+
+@Component
+@Order(1)
+public class RequestIdFilter extends OncePerRequestFilter {  // OncePerRequestFilter: guarantees single execution per request
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request,
+                                    HttpServletResponse response,
+                                    FilterChain filterChain) throws ServletException, IOException {
+        String requestId = UUID.randomUUID().toString();
+        MDC.put("requestId", requestId);              // Add to logging context
+        response.addHeader("X-Request-Id", requestId);
+        try {
+            filterChain.doFilter(request, response);  // proceed
+        } finally {
+            MDC.clear();  // Always clean up MDC
+        }
+    }
+}
+
+// HandlerInterceptor: operates inside DispatcherServlet
+//   - Has access to the resolved handler (controller method) and ModelAndView
+//   - Only runs for requests dispatched to controllers (NOT static resources)
+//   - Use for: authorization checks, audit logging with controller metadata, locale setup
+
+@Component
+public class AuthorizationInterceptor implements HandlerInterceptor {
+
+    // preHandle: before controller method — return false to abort request
+    @Override
+    public boolean preHandle(HttpServletRequest request,
+                             HttpServletResponse response,
+                             Object handler) {
+        if (handler instanceof HandlerMethod method) {
+            RequiresPermission annotation = method.getMethodAnnotation(RequiresPermission.class);
+            if (annotation != null && !hasPermission(request, annotation.value())) {
+                response.setStatus(HttpStatus.FORBIDDEN.value());
+                return false;  // abort — controller is NOT called
+            }
+        }
+        return true;
+    }
+
+    // postHandle: after controller method, before view rendering
+    @Override
+    public void postHandle(HttpServletRequest request, HttpServletResponse response,
+                           Object handler, ModelAndView modelAndView) {
+        // Can modify the model/view here
+    }
+
+    // afterCompletion: after complete request including view rendering (always called)
+    @Override
+    public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
+                                Object handler, Exception ex) {
+        if (ex != null) auditService.logError(request, ex);
+    }
+}
+
+// Register interceptors with URL patterns:
+@Configuration
+public class WebConfig implements WebMvcConfigurer {
+
+    @Autowired AuthorizationInterceptor authInterceptor;
+
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(authInterceptor)
+            .addPathPatterns("/api/**")           // apply to API paths
+            .excludePathPatterns("/api/public/**", "/api/health");
+    }
+}
+```
+
+```
+Filter vs HandlerInterceptor comparison:
+  Filter                   | HandlerInterceptor
+  Servlet spec (javax)     | Spring MVC
+  Before DispatcherServlet | Inside DispatcherServlet
+  ALL requests             | Only mapped controller requests
+  No handler metadata      | Has handler/controller info
+  Security/logging/GZIP    | Authorization, audit, locale
+```
+
+---
+
+## Q49 🟡 ⭐ What is the difference between RestTemplate and WebClient?
+
+```java
+// RestTemplate — synchronous, blocking HTTP client (legacy, maintenance mode since Spring 5)
+@Service
+public class LegacyOrderService {
+
+    private final RestTemplate restTemplate;
+
+    public LegacyOrderService(RestTemplateBuilder builder) {
+        this.restTemplate = builder
+            .setConnectTimeout(Duration.ofSeconds(3))
+            .setReadTimeout(Duration.ofSeconds(10))
+            .build();
+    }
+
+    public Product getProduct(Long id) {
+        // Blocks the calling thread until response arrives
+        return restTemplate.getForObject("/api/products/{id}", Product.class, id);
+    }
+
+    public Order createOrder(OrderRequest req) {
+        ResponseEntity<Order> response = restTemplate.postForEntity(
+            "/api/orders", req, Order.class);
+        return response.getBody();
+    }
+}
+
+// WebClient — non-blocking, reactive HTTP client (Spring 5+, recommended)
+@Service
+public class ModernOrderService {
+
+    private final WebClient webClient;
+
+    public ModernOrderService(WebClient.Builder builder) {
+        this.webClient = builder
+            .baseUrl("https://api.example.com")
+            .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+            .filter(ExchangeFilterFunctions.basicAuthentication("user", "pass"))
+            .codecs(c -> c.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
+            .build();
+    }
+
+    // Reactive — returns Mono<Product>, does NOT block the calling thread
+    public Mono<Product> getProduct(Long id) {
+        return webClient.get()
+            .uri("/products/{id}", id)
+            .retrieve()
+            .onStatus(status -> status.is4xxClientError(),
+                response -> response.bodyToMono(String.class)
+                    .flatMap(body -> Mono.error(new ProductNotFoundException(body))))
+            .onStatus(HttpStatusCode::is5xxServerError,
+                response -> Mono.error(new ServiceException("Upstream error")))
+            .bodyToMono(Product.class)
+            .timeout(Duration.ofSeconds(5))
+            .retryWhen(Retry.backoff(2, Duration.ofMillis(200)));
+    }
+
+    // Can also be used in a blocking context (Spring MVC + WebClient together)
+    public Product getProductBlocking(Long id) {
+        return getProduct(id).block();  // block() converts Mono → synchronous result
+    }
+
+    // Parallel fan-out: call 3 services simultaneously
+    public Mono<Dashboard> getDashboard(Long userId) {
+        return Mono.zip(
+            webClient.get().uri("/users/{id}", userId).retrieve().bodyToMono(User.class),
+            webClient.get().uri("/orders?userId={id}", userId).retrieve().bodyToFlux(Order.class).collectList(),
+            webClient.get().uri("/notifications?userId={id}", userId).retrieve().bodyToFlux(Notification.class).collectList()
+        ).map(t -> new Dashboard(t.getT1(), t.getT2(), t.getT3()));
+    }
+}
+```
+
+```
+RestTemplate vs WebClient:
+  RestTemplate                  | WebClient
+  Blocking (thread-per-call)    | Non-blocking (reactor event loop)
+  Spring MVC only               | MVC + WebFlux
+  Simple, familiar API          | Reactive operators (map/flatMap/zip)
+  Maintenance mode (no new feat)| Actively developed
+  Use: legacy apps, simple calls| Use: new projects, high-concurrency, fan-out
+```
+
+---
+
+## Q50 🟡 ⭐ What is Spring Security method-level security? How do @PreAuthorize and @PostAuthorize work?
+
+```java
+// Enable method-level security on a @Configuration class
+@Configuration
+@EnableMethodSecurity(prePostEnabled = true, securedEnabled = true)
+public class SecurityConfig { }
+
+@RestController
+@RequestMapping("/api/orders")
+public class OrderController {
+
+    // @PreAuthorize: evaluated BEFORE the method executes
+    // Uses Spring Expression Language (SpEL) — has access to authentication + method args
+    @GetMapping("/{id}")
+    @PreAuthorize("hasRole('USER') or hasRole('ADMIN')")
+    public Order getOrder(@PathVariable Long id) {
+        return orderService.findById(id);
+    }
+
+    // Access method arguments via #paramName
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN') or @orderSecurityService.isOwner(#id, authentication.name)")
+    public void deleteOrder(@PathVariable Long id) {
+        orderService.delete(id);
+    }
+
+    // @PostAuthorize: evaluated AFTER method executes, can inspect return value
+    // returnObject refers to the method's return value
+    @GetMapping("/{id}/details")
+    @PostAuthorize("returnObject.userId == authentication.principal.id or hasRole('ADMIN')")
+    public OrderDetails getOrderDetails(@PathVariable Long id) {
+        return orderService.getDetails(id);  // method runs; then auth check happens
+    }
+
+    // @PreFilter: filters input collection before method runs
+    @PutMapping("/batch")
+    @PreFilter("filterObject.userId == authentication.principal.id")
+    public List<Order> updateOrders(@RequestBody List<Order> orders) {
+        // Only orders owned by current user are passed in; others are filtered out
+        return orderService.updateAll(orders);
+    }
+
+    // @PostFilter: filters return collection after method runs
+    @GetMapping
+    @PostFilter("filterObject.userId == authentication.principal.id or hasRole('ADMIN')")
+    public List<Order> listOrders() {
+        return orderService.findAll();  // all returned, then filtered by expression
+    }
+
+    // @Secured: simpler, role-only check (no SpEL)
+    @PatchMapping("/{id}/approve")
+    @Secured({"ROLE_MANAGER", "ROLE_ADMIN"})
+    public void approveOrder(@PathVariable Long id) {
+        orderService.approve(id);
+    }
+}
+
+// Custom security service for complex authorization logic
+@Service("orderSecurityService")
+public class OrderSecurityService {
+
+    private final OrderRepository orderRepository;
+
+    public boolean isOwner(Long orderId, String username) {
+        return orderRepository.findById(orderId)
+            .map(o -> o.getCreatedBy().equals(username))
+            .orElse(false);
+    }
+}
+```
+
+> ⭐ **Key distinction**: `@PreAuthorize` checks before execution — use it to prevent unauthorized access to the method body. `@PostAuthorize` checks after execution — use it to ensure the returned object belongs to the caller (rare; method has already run and side effects have occurred).
+
+---
+
+## Q51 🟡 ⭐ What is Spring Data JPA Auditing? How do you auto-populate created/modified fields?
+
+```java
+// Step 1: Enable JPA auditing
+@SpringBootApplication
+@EnableJpaAuditing(auditorAwareRef = "currentUserAuditor")
+public class App { }
+
+// Step 2: Provide the current user (auditor)
+@Component("currentUserAuditor")
+public class SpringSecurityAuditorAware implements AuditorAware<String> {
+
+    @Override
+    public Optional<String> getCurrentAuditor() {
+        return Optional.ofNullable(SecurityContextHolder.getContext().getAuthentication())
+            .filter(Authentication::isAuthenticated)
+            .map(Authentication::getName);
+    }
+}
+
+// Step 3: Use audit annotations on a base class or directly on entities
+@MappedSuperclass
+@EntityListeners(AuditingEntityListener.class)  // Required to trigger audit population
+public abstract class AuditableEntity {
+
+    @CreatedDate
+    @Column(name = "created_at", updatable = false, nullable = false)
+    private LocalDateTime createdAt;
+
+    @LastModifiedDate
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    @CreatedBy
+    @Column(name = "created_by", updatable = false)
+    private String createdBy;
+
+    @LastModifiedBy
+    @Column(name = "updated_by")
+    private String updatedBy;
+
+    @Version
+    private Long version;  // Optimistic locking — auto-incremented by Hibernate
+}
+
+@Entity
+@Table(name = "products")
+public class Product extends AuditableEntity {
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    private String name;
+    private BigDecimal price;
+    // Inherits: createdAt, updatedAt, createdBy, updatedBy, version
+}
+
+// Result: on save(), Spring auto-sets:
+//   createdAt  = current timestamp (INSERT only)
+//   updatedAt  = current timestamp (INSERT + every UPDATE)
+//   createdBy  = SecurityContextHolder username (INSERT only)
+//   updatedBy  = SecurityContextHolder username (INSERT + every UPDATE)
+//   version    = 0 on INSERT, incremented on every UPDATE (optimistic lock)
+```
+
+---
+
+## Q52 🟡 ⭐ What is @Modifying? What do clearAutomatically and flushAutomatically do?
+
+```java
+// @Modifying marks a @Query as a DML statement (UPDATE/DELETE/INSERT)
+// Without @Modifying, Spring throws InvalidDataAccessApiUsageException
+
+public interface UserRepository extends JpaRepository<User, Long> {
+
+    // Basic bulk update
+    @Modifying
+    @Transactional
+    @Query("UPDATE User u SET u.active = false WHERE u.lastLoginAt < :cutoff")
+    int deactivateInactiveUsers(@Param("cutoff") LocalDateTime cutoff);
+
+    // @Modifying(clearAutomatically = true)
+    // After executing the DML, evicts ALL entities from the first-level cache (EntityManager)
+    // Without this: entities already loaded in the same tx still hold STALE data
+    @Modifying(clearAutomatically = true)
+    @Transactional
+    @Query("UPDATE Product p SET p.price = p.price * :multiplier WHERE p.category = :category")
+    int applyPriceMultiplier(@Param("multiplier") BigDecimal multiplier,
+                             @Param("category") String category);
+
+    // @Modifying(flushAutomatically = true)
+    // Before executing the DML, flushes the EntityManager (writes pending changes to DB)
+    // Without this: pending Hibernate changes might not be visible to the native query
+    @Modifying(flushAutomatically = true)
+    @Transactional
+    @Query(value = "DELETE FROM orders WHERE user_id = :userId AND status = 'CANCELLED'",
+           nativeQuery = true)
+    int deleteCancelledOrdersByUser(@Param("userId") Long userId);
+}
+
+// Stale cache problem without clearAutomatically:
+@Service
+public class ProductService {
+
+    @Transactional
+    public void demonstrateStaleCache() {
+        Product product = productRepository.findById(1L).get();  // loaded into L1 cache, price=100
+
+        // Bulk update changes price to 150 in the database
+        productRepository.applyPriceMultiplier(BigDecimal.valueOf(1.5), "electronics");
+
+        // WITHOUT clearAutomatically=true:
+        Product same = productRepository.findById(1L).get();
+        System.out.println(same.getPrice()); // prints 100 — STALE! Hibernate returned L1 cached object
+
+        // WITH clearAutomatically=true:
+        // L1 cache was cleared after the UPDATE — findById re-queries DB → prints 150
+    }
+}
+```
+
+---
+
+## Q53 🟡 ⭐ What are Hibernate @GeneratedValue strategies? How does IDENTITY vs SEQUENCE affect batch inserts?
+
+```java
+// Strategy 1: IDENTITY — database auto-increment column
+// Problem: Hibernate must execute INSERT immediately to retrieve the generated ID
+// Cannot batch: each INSERT is issued individually to get the ID back before proceeding
+@Entity
+public class Order {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    // INSERT fires immediately, batching is DISABLED for this entity
+}
+
+// Strategy 2: SEQUENCE — uses a DB sequence object (PostgreSQL, Oracle)
+// Hibernate pre-fetches a block of IDs via allocationSize — avoids one DB call per insert
+// INSERT can be batched: Hibernate already knows all IDs before writing to DB
+@Entity
+@SequenceGenerator(
+    name = "order_seq",
+    sequenceName = "order_id_seq",  // name of DB sequence
+    allocationSize = 50             // fetch 50 IDs at once: nextval() called every 50 inserts
+)
+public class Order {
+    @Id
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "order_seq")
+    private Long id;
+    // INSERT can be batched in groups of 50 — hibernate.jdbc.batch_size applies
+}
+
+// Strategy 3: TABLE — uses a dedicated DB table to simulate a sequence
+// Extremely slow (SELECT + UPDATE per ID allocation with row lock)
+// Avoid in production — exists only for DB portability
+@Entity
+public class LegacyEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.TABLE)
+    private Long id;
+    // AVOID: causes lock contention on the generator table under concurrent inserts
+}
+
+// Strategy 4: UUID — generates UUID in Java before INSERT
+// No DB round-trip for ID — fully batchable, works with any DB
+// Tradeoff: 16-byte primary key (vs 8-byte Long) → larger indexes, more fragmentation
+@Entity
+public class Event {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(columnDefinition = "uuid", updatable = false)
+    private UUID id;
+    // Best for distributed inserts across multiple JVMs — no sequence conflicts
+}
+
+// Strategy 5: Manually assigned ID (no @GeneratedValue)
+// Use when the ID is a natural key (e.g., country code, ISBN)
+@Entity
+public class Country {
+    @Id
+    @Column(length = 2)
+    private String code;  // "US", "GB", "IN" — set by application code
+}
+```
+
+```
+Strategy comparison:
+  IDENTITY  | DB auto-increment | No batch  | MySQL default  | Simplest
+  SEQUENCE  | DB sequence       | Batches   | PostgreSQL     | Recommended
+  TABLE     | DB table lock     | No batch  | Any DB         | Avoid
+  UUID      | JVM generated     | Batches   | Any DB         | Distributed systems
+  Manual    | Application sets  | Batches   | Natural keys   | When key is known
+```
+
+> ⭐ **Apple interview insight**: If your entity uses `GenerationType.IDENTITY` and you wonder why `hibernate.jdbc.batch_size=50` has no effect — this is why. Switch to `SEQUENCE` with `allocationSize` matching your batch size.
 
 ---
 
