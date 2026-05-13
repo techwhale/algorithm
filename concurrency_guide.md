@@ -20,6 +20,11 @@
 12. [Virtual Threads (Java 21)](#chapter-12-virtual-threads-java-21)
 13. [Spring + Concurrency](#chapter-13-spring--concurrency)
 14. [Classic Problems & System Design](#chapter-14-classic-problems--system-design)
+15. [ThreadLocal](#chapter-15-threadlocal)
+16. [StampedLock & AQS](#chapter-16-stampedlock--aqs)
+17. [ThreadPoolExecutor Deep Dive](#chapter-17-threadpoolexecutor-deep-dive)
+18. [wait/notify, Condition, Exchanger](#chapter-18-waitnotify-condition-exchanger)
+19. [Structured Concurrency (Java 21)](#chapter-19-structured-concurrency-java-21)
 
 ---
 
@@ -3129,3 +3134,776 @@ Per-thread storage                            ThreadLocal (always remove()!)
 ---
 
 *Document compiled from: LeetCode Discuss, Glassdoor Apple interview reports, Baeldung, Oracle Java Docs, Java Concurrency in Practice (Brian Goetz)*
+
+---
+
+# Chapter 15: ThreadLocal
+
+---
+
+## Q33 🟡 ⭐ What is ThreadLocal? When should you use it?
+
+### Plain English First
+
+`ThreadLocal` gives each thread its **own private copy** of a variable. Thread A reads and writes its copy; Thread B reads and writes its own copy. They never see each other's values — no synchronization needed.
+
+Think of it like a locker room: everyone has their own locker (ThreadLocal storage). You don't need a lock to access your locker — it's yours alone.
+
+```java
+// Without ThreadLocal — shared state, needs synchronization
+public class SharedFormatter {
+    private static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+    // SimpleDateFormat is NOT thread-safe — concurrent access causes corrupt output
+
+    public static String format(Date date) {
+        synchronized (sdf) {       // Must synchronize — kills parallelism
+            return sdf.format(date);
+        }
+    }
+}
+
+// With ThreadLocal — each thread gets its own SimpleDateFormat instance
+public class ThreadSafeFormatter {
+
+    private static final ThreadLocal<SimpleDateFormat> threadLocalSdf =
+        ThreadLocal.withInitial(() -> new SimpleDateFormat("yyyy-MM-dd"));
+    // withInitial: lambda runs ONCE per thread (lazy, on first get())
+
+    public static String format(Date date) {
+        return threadLocalSdf.get().format(date);
+        // threadLocalSdf.get() returns THIS thread's own SimpleDateFormat
+        // No synchronization needed — each thread has its own instance
+    }
+}
+```
+
+### Real Use Cases
+
+```java
+// Use Case 1: Database connection per thread (old JDBC pattern)
+public class ConnectionHolder {
+    private static final ThreadLocal<Connection> connectionHolder = new ThreadLocal<>();
+
+    public static void setConnection(Connection conn) {
+        connectionHolder.set(conn);
+    }
+
+    public static Connection getConnection() {
+        return connectionHolder.get();
+    }
+
+    public static void clear() {
+        connectionHolder.remove();  // CRITICAL: always remove on thread return to pool
+    }
+}
+
+// Use Case 2: Request context in Spring (how Spring stores SecurityContext, RequestContext)
+// Spring's RequestContextHolder uses ThreadLocal internally:
+// Every HTTP request binds to a thread → ThreadLocal stores request attributes
+// Any code in the call stack can access them without passing parameters around
+
+@Service
+public class AuditService {
+
+    public void logAction(String action) {
+        // Get current user from ThreadLocal (set by Spring Security's filter)
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String username = auth.getName();
+        log.info("User {} performed: {}", username, action);
+        // No need to pass 'username' through every method — ThreadLocal carries it
+    }
+}
+
+// Use Case 3: Tenant ID in multi-tenant apps
+public class TenantContext {
+
+    private static final ThreadLocal<String> currentTenant = new ThreadLocal<>();
+
+    public static void setTenantId(String tenantId) { currentTenant.set(tenantId); }
+    public static String getTenantId() { return currentTenant.get(); }
+    public static void clear() { currentTenant.remove(); }
+}
+
+// Middleware sets it, all downstream code reads it:
+@Component
+public class TenantFilter implements Filter {
+    @Override
+    public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain)
+            throws IOException, ServletException {
+        String tenantId = req.getHeader("X-Tenant-Id");
+        TenantContext.setTenantId(tenantId);
+        try {
+            chain.doFilter(req, res);
+        } finally {
+            TenantContext.clear();   // ← ALWAYS clean up in finally block!
+        }
+    }
+}
+```
+
+### The Memory Leak Trap
+
+```java
+// ❌ DANGEROUS with thread pools — threads are reused, ThreadLocals persist!
+public class LeakyService {
+
+    private static final ThreadLocal<byte[]> cache = new ThreadLocal<>();
+
+    public void process() {
+        cache.set(new byte[1024 * 1024]);  // Store 1MB per thread
+        // ... do work ...
+        // If you forget cache.remove():
+        // Thread returns to pool with 1MB still in its ThreadLocal
+        // Next request on this thread inherits the old data
+        // After 1000 requests: all pool threads hold 1MB = 1GB leaked!
+    }
+}
+
+// ✅ Always remove in a finally block
+public void processSafe() {
+    try {
+        cache.set(new byte[1024 * 1024]);
+        // ... do work ...
+    } finally {
+        cache.remove();  // Mandatory: releases memory, prevents cross-request contamination
+    }
+}
+```
+
+> ⭐ **Apple interview rule**: "Use ThreadLocal for per-request context (tenant ID, user ID, request ID). Always remove in `finally`. Never store large objects. Avoid with virtual threads — virtual threads are cheap to create, so per-thread state loses its advantage."
+
+---
+
+# Chapter 16: StampedLock & AQS
+
+---
+
+## Q34 🟡 ⭐ What is StampedLock? How does it improve on ReadWriteLock?
+
+### Plain English First
+
+`ReadWriteLock` allows many readers OR one writer — but readers still acquire a real lock (blocking writers). `StampedLock` adds **optimistic reads**: readers can read WITHOUT acquiring any lock at all. They just check afterward if a write happened during their read — if not, they're done. If yes, they fall back to a real read lock.
+
+```java
+import java.util.concurrent.locks.StampedLock;
+
+public class PointCoordinate {
+    private double x, y;
+    private final StampedLock lock = new StampedLock();
+
+    // Write — exclusive lock (same as ReentrantReadWriteLock write lock)
+    public void move(double deltaX, double deltaY) {
+        long stamp = lock.writeLock();       // Acquire write lock, get a stamp
+        try {
+            x += deltaX;
+            y += deltaY;
+        } finally {
+            lock.unlockWrite(stamp);          // Release using the stamp
+        }
+    }
+
+    // Optimistic read — NO lock acquired at all (fastest path)
+    public double distanceFromOrigin() {
+        long stamp = lock.tryOptimisticRead();  // Get a "version" stamp — no lock
+        double currentX = x;
+        double currentY = y;                    // Read values (may be in-progress write!)
+
+        if (!lock.validate(stamp)) {            // Was there a write while we read?
+            // YES — fall back to a real read lock
+            stamp = lock.readLock();
+            try {
+                currentX = x;
+                currentY = y;
+            } finally {
+                lock.unlockRead(stamp);
+            }
+        }
+        // NO write happened — our reads were consistent, use them directly
+        return Math.sqrt(currentX * currentX + currentY * currentY);
+    }
+}
+```
+
+### StampedLock vs ReadWriteLock vs synchronized
+
+```
+synchronized:
+  One thread at a time — readers block each other
+  Simple, always correct
+  Best for: low-contention, simple use cases
+
+ReentrantReadWriteLock:
+  Multiple readers simultaneously, exclusive writer
+  Readers still acquire a lock (CAS + memory barrier)
+  Best for: read-heavy workloads (10:1 read/write ratio)
+
+StampedLock:
+  Optimistic read: zero lock acquisition on happy path
+  Writers still exclusive
+  Best for: extremely read-heavy (100:1+), reads are short, writes are rare
+  Caveat: NOT reentrant (don't call readLock() if you already hold it)
+           No condition variables
+           Harder to use correctly
+```
+
+---
+
+## Q35 🔴 What is AbstractQueuedSynchronizer (AQS)? How do ReentrantLock and CountDownLatch use it?
+
+### Plain English First
+
+AQS is the **engine** underneath almost every synchronizer in `java.util.concurrent`. If you want to understand why `ReentrantLock`, `CountDownLatch`, `Semaphore`, and `CyclicBarrier` all work similarly, it's because they all extend or use AQS.
+
+```
+AQS provides:
+  ✓ A volatile int state  — the synchronizer's core state (lock count, permit count, etc.)
+  ✓ A CLH queue           — FIFO queue of blocked threads waiting to acquire
+  ✓ CAS operations        — atomic state transitions without OS-level locks
+  ✓ Park/unpark           — efficient thread blocking/waking (no busy-wait)
+
+Subclass just overrides:
+  tryAcquire(int)   — can I take the lock? (returns true if acquired)
+  tryRelease(int)   — am I releasing the lock? (returns true if fully released)
+  tryAcquireShared  — for shared locks (semaphore, reader lock)
+  tryReleaseShared  — for shared releases
+
+AQS handles:
+  - Queuing threads that fail tryAcquire
+  - Waking the next thread when lock is released
+  - Fairness ordering
+  - Interruption support
+```
+
+```java
+// How ReentrantLock uses AQS internally:
+// state = 0        → lock is FREE
+// state = 1        → locked by one thread (non-reentrant hold)
+// state = 2,3,...  → same thread locked it N times (reentrant)
+
+// Simplified NonfairSync.tryAcquire(1):
+protected boolean tryAcquire(int acquires) {
+    Thread current = Thread.currentThread();
+    int c = getState();           // Read volatile state
+    if (c == 0) {
+        if (compareAndSetState(0, acquires)) {   // CAS: 0 → 1
+            setExclusiveOwnerThread(current);
+            return true;                          // Got the lock
+        }
+    } else if (current == getExclusiveOwnerThread()) {
+        // Re-entrant: same thread, increment state
+        setState(c + acquires);
+        return true;
+    }
+    return false;                 // Another thread holds it → AQS queues this thread
+}
+
+// How CountDownLatch uses AQS:
+// state = N  (the count, set in constructor)
+// countDown() → tryReleaseShared(1): state-- via CAS
+//               when state reaches 0 → wake all waiting threads
+// await()    → tryAcquireShared(1): if state == 0 return 1 (proceed)
+//                                   else return -1 (AQS parks thread in queue)
+
+// How Semaphore uses AQS:
+// state = N  (number of permits)
+// acquire() → tryAcquireShared(1): if state > 0, CAS state--, proceed
+//                                  if state == 0, park thread
+// release() → tryReleaseShared(1): CAS state++, wake next queued thread
+```
+
+---
+
+## Q36 🟡 What is Phaser? How does it differ from CyclicBarrier?
+
+```java
+import java.util.concurrent.Phaser;
+
+// CyclicBarrier: fixed number of parties, resets automatically
+// Phaser: dynamic parties (register/deregister at runtime), multiple phases
+
+// Phaser example: parallel map-reduce in phases
+public class ParallelMapReduce {
+
+    public void run(List<DataChunk> chunks) throws InterruptedException {
+        Phaser phaser = new Phaser(1);  // Register the main thread (1 party)
+
+        // Phase 1: Map — each worker processes one chunk
+        for (DataChunk chunk : chunks) {
+            phaser.register();           // Register this worker as a party
+            Thread.ofVirtual().start(() -> {
+                try {
+                    processChunk(chunk);
+                } finally {
+                    phaser.arriveAndDeregister();  // Done — deregister from phaser
+                }
+            });
+        }
+
+        // Main thread waits for ALL map tasks to finish
+        phaser.arriveAndAwaitAdvance();  // Advance from phase 0 to phase 1
+        System.out.println("Phase 1 (Map) complete. Starting reduce...");
+
+        // Phase 2: Reduce
+        for (int i = 0; i < chunks.size() / 2; i++) {
+            phaser.register();
+            int idx = i;
+            Thread.ofVirtual().start(() -> {
+                try {
+                    reduceChunks(idx);
+                } finally {
+                    phaser.arriveAndDeregister();
+                }
+            });
+        }
+
+        phaser.arriveAndAwaitAdvance();  // Wait for all reduce tasks
+        System.out.println("Phase 2 (Reduce) complete.");
+
+        phaser.arriveAndDeregister();    // Main thread deregisters — phaser terminates
+    }
+}
+
+// CyclicBarrier — simpler, fixed parties, all must arrive before any proceed
+// Phaser — flexible, parties can join/leave, supports multiple phases
+// Use Phaser when: phases have different numbers of workers, or workers join/leave dynamically
+```
+
+---
+
+## Q37 🟡 What is LockSupport? How do park/unpark work?
+
+```java
+import java.util.concurrent.locks.LockSupport;
+
+// LockSupport is the primitive that AQS, Thread.sleep, Object.wait all use under the hood
+// park()   = suspend the current thread (like wait() but without a monitor)
+// unpark() = wake a specific thread (like notify() but targeted)
+
+public class ParkUnparkDemo {
+
+    public static void main(String[] args) throws InterruptedException {
+        Thread worker = new Thread(() -> {
+            System.out.println("Worker: starting work...");
+
+            // Do some work, then wait for a signal
+            LockSupport.park();   // Suspends this thread — no busy-wait, no lock needed
+
+            System.out.println("Worker: resumed and continuing!");
+        });
+
+        worker.start();
+        Thread.sleep(500);   // Let worker run and park
+
+        System.out.println("Main: unparking worker");
+        LockSupport.unpark(worker);  // Wake that specific thread
+        // Unlike notify(): works even if unpark() called BEFORE park() (permit mechanism)
+    }
+}
+
+// Key differences from wait/notify:
+// 1. No monitor required — park/unpark work on any object
+// 2. Targeted: unpark(specificThread) vs notify() (wakes any random waiter)
+// 3. Permit: unpark() stores a permit; if park() called after unpark(), it returns immediately
+//    (unlike notify() which is lost if no thread is waiting yet)
+// 4. Spurious wakeups: park() can return spuriously — always check condition in a loop
+
+// CompletableFuture.get() uses park() internally
+// ReentrantLock's queued threads are parked by AQS using LockSupport.park()
+// All blocked threads in a thread dump showing WAITING or TIMED_WAITING are park()ed
+```
+
+---
+
+## Q38 🟡 What is CompletionService? When do you use it over ExecutorService?
+
+```java
+import java.util.concurrent.*;
+
+// ExecutorService.submit() returns Futures — but you must poll each one:
+// future1.get() → future2.get() → future3.get()
+// Problem: if future3 finishes first, you're still blocked on future1
+
+// CompletionService: results arrive in COMPLETION ORDER (not submission order)
+
+public class CompletionServiceDemo {
+
+    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    private final CompletionService<SearchResult> completionService =
+        new ExecutorCompletionService<>(executor);
+    // Internally: wraps results in a BlockingQueue, take() returns next completed result
+
+    // Search 5 external APIs in parallel, process results as they arrive
+    public List<SearchResult> searchAllSources(String query) throws Exception {
+        int taskCount = 5;
+
+        // Submit all searches in parallel
+        for (String source : List.of("web", "images", "news", "maps", "shopping")) {
+            completionService.submit(() -> searchSource(source, query));
+        }
+
+        List<SearchResult> results = new ArrayList<>();
+
+        // Process results AS THEY COMPLETE — fastest results processed first
+        for (int i = 0; i < taskCount; i++) {
+            Future<SearchResult> completed = completionService.take(); // blocks until next result
+            try {
+                results.add(completed.get());  // get() returns immediately (already done)
+            } catch (ExecutionException e) {
+                log.warn("One search source failed", e.getCause());
+                // Continue — don't let one failure block others
+            }
+        }
+
+        return results;
+    }
+    // If "images" search completes in 50ms, we process it immediately
+    // Don't wait for "web" search (which might take 500ms)
+}
+```
+
+---
+
+# Chapter 17: ThreadPoolExecutor Deep Dive
+
+---
+
+## Q39 🟡 ⭐ What happens inside ThreadPoolExecutor? What are the rejection policies?
+
+```java
+// ThreadPoolExecutor has 4 key parameters:
+new ThreadPoolExecutor(
+    int corePoolSize,     // Threads always kept alive (even if idle)
+    int maximumPoolSize,  // Max threads allowed
+    long keepAliveTime,   // How long idle threads above core survive before termination
+    TimeUnit unit,
+    BlockingQueue<Runnable> workQueue,  // Where tasks wait when all threads busy
+    RejectedExecutionHandler handler    // What to do when queue AND threads are full
+);
+
+// Task submission flow:
+// 1. If active threads < corePoolSize → create new thread (even if idle threads exist)
+// 2. If active threads >= corePoolSize → try to add to workQueue
+// 3. If workQueue is full AND active threads < maximumPoolSize → create new thread
+// 4. If workQueue full AND threads at max → REJECTION HANDLER fires
+
+// Queue types and their effect:
+// LinkedBlockingQueue (unbounded): tasks wait indefinitely
+//   maximumPoolSize is NEVER reached (queue never fills) — threadPool stays at core size
+//   Risk: OOM if producer is faster than consumer
+
+// ArrayBlockingQueue (bounded, e.g., 100):
+//   Once 100 tasks queued AND core threads busy → create threads up to max
+//   Once max threads AND queue full → rejection handler fires
+
+// SynchronousQueue (no capacity):
+//   Every submit() must hand off directly to a thread
+//   If no thread available AND at max: rejection fires immediately
+//   Forces maximum parallelism (Executors.newCachedThreadPool() uses this)
+
+// Rejection Policies:
+executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+// DEFAULT: throw RejectedExecutionException — caller must handle it
+
+executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+// SAFEST: the calling thread executes the task itself
+// Provides natural backpressure: caller slows down → stops submitting
+
+executor.setRejectedExecutionHandler(new ThreadPoolExecutor.DiscardPolicy());
+// LOSSY: silently drop the task — use only for non-critical work
+
+executor.setRejectedExecutionHandler(new ThreadPoolExecutor.DiscardOldestPolicy());
+// Drop the OLDEST queued task, retry submitting the new one
+// Risk: starvation of old tasks
+
+// Custom rejection handler (recommended for production):
+executor.setRejectedExecutionHandler((task, pool) -> {
+    if (!pool.isShutdown()) {
+        metrics.increment("tasks.rejected");
+        log.warn("Task rejected. Queue size: {}, Active: {}", 
+                 pool.getQueue().size(), pool.getActiveCount());
+        // Option 1: put to a dead-letter queue for retry
+        deadLetterQueue.offer(task);
+        // Option 2: block caller with timeout (backpressure)
+        // pool.getQueue().offer(task, 1, TimeUnit.SECONDS);
+    }
+});
+```
+
+---
+
+# Chapter 18: wait/notify, Condition, Exchanger
+
+---
+
+## Q40 🟡 ⭐ How do wait(), notify(), and notifyAll() work? What are the rules for using them?
+
+```java
+// wait/notify operate on the object's intrinsic monitor
+// Rules:
+//   1. Must be called inside a synchronized block on the SAME object
+//   2. wait() releases the monitor lock and suspends the thread
+//   3. notify() wakes ONE waiting thread (which one is JVM-decided, not deterministic)
+//   4. notifyAll() wakes ALL waiting threads (they then compete for the lock)
+//   5. Woken thread must re-acquire the lock before continuing
+
+public class BoundedBuffer<T> {
+
+    private final Queue<T> buffer = new LinkedList<>();
+    private final int capacity;
+
+    public BoundedBuffer(int capacity) { this.capacity = capacity; }
+
+    // Producer: blocks when buffer is full
+    public synchronized void put(T item) throws InterruptedException {
+        // ALWAYS use while loop, not if — guard against spurious wakeups
+        while (buffer.size() == capacity) {
+            wait();  // releases lock; thread enters WAITING state
+            // On wakeup: re-acquires lock, re-checks condition
+        }
+        buffer.add(item);
+        notifyAll();  // wake consumers (and other producers — they will re-check)
+    }
+
+    // Consumer: blocks when buffer is empty
+    public synchronized T take() throws InterruptedException {
+        while (buffer.isEmpty()) {
+            wait();   // releases lock; waits for producer to add
+        }
+        T item = buffer.poll();
+        notifyAll();  // wake producers
+        return item;
+    }
+}
+
+// wait() vs sleep():
+//   wait():  releases the intrinsic lock while waiting — other threads can enter synchronized blocks
+//   sleep(): does NOT release any lock — just pauses the thread
+
+// notifyAll() vs notify():
+//   notify():    wakes exactly one waiting thread (undefined which one)
+//               risk: if the wrong thread wakes, it may re-wait and no one makes progress
+//   notifyAll(): wakes all waiting threads — they compete for the lock, each re-checks condition
+//               safer default unless you're certain all waiters are interchangeable
+```
+
+---
+
+## Q41 🟡 ⭐ What is the Condition interface? How does it improve on wait()/notifyAll()?
+
+```java
+// Condition is the ReentrantLock-based equivalent of wait/notify
+// Advantage: one lock can have MULTIPLE conditions (separate wait-sets per condition)
+// With intrinsic lock: only one wait-set per object — notifyAll wakes EVERYONE including irrelevant threads
+
+public class BoundedBuffer<T> {
+
+    private final ReentrantLock lock = new ReentrantLock();
+    private final Condition notFull  = lock.newCondition();   // producers wait here
+    private final Condition notEmpty = lock.newCondition();   // consumers wait here
+
+    private final Queue<T> buffer = new ArrayDeque<>();
+    private final int capacity;
+
+    public BoundedBuffer(int capacity) { this.capacity = capacity; }
+
+    public void put(T item) throws InterruptedException {
+        lock.lock();
+        try {
+            while (buffer.size() == capacity) {
+                notFull.await();  // releases lock, waits on notFull condition
+            }
+            buffer.add(item);
+            notEmpty.signal();    // wake ONE consumer — only consumers are on this condition
+            // vs notifyAll(): would wake ALL threads on the single wait set, including producers
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public T take() throws InterruptedException {
+        lock.lock();
+        try {
+            while (buffer.isEmpty()) {
+                notEmpty.await();  // wait on notEmpty condition
+            }
+            T item = buffer.poll();
+            notFull.signal();      // wake ONE producer
+            return item;
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+
+// Condition.await() variants:
+condition.await();                        // wait indefinitely (like wait())
+condition.await(5, TimeUnit.SECONDS);     // wait with timeout; returns false if timed out
+condition.awaitUntil(deadline);           // wait until absolute Date
+condition.awaitUninterruptibly();         // wait, ignoring interrupts (rare)
+condition.awaitNanos(1_000_000_000L);     // nanosecond-precision timeout; returns remaining nanos
+```
+
+```
+wait()/notifyAll() vs Condition:
+  Object monitor            | ReentrantLock + Condition
+  One wait-set per object   | Multiple Conditions per lock
+  notify() is non-targeted  | signal() targets specific condition
+  No timeout without tricks | awaitNanos, awaitUntil, await(time, unit)
+  Must use synchronized     | Must use lock.lock()/unlock()
+  Less code for simple cases| Better for producer-consumer with distinct wait-sets
+```
+
+---
+
+## Q42 🟡 What is Exchanger? Give a concrete use case.
+
+```java
+// Exchanger: a synchronization point where exactly two threads swap objects
+// Thread A calls exchange(a) and blocks
+// Thread B calls exchange(b) and blocks
+// When both arrive: Thread A receives b, Thread B receives a
+// Both unblock simultaneously
+
+import java.util.concurrent.Exchanger;
+
+public class DataPipelineExchanger {
+
+    // Use case: producer fills a buffer; when full, exchanges it with an empty buffer from consumer
+    // Producer and consumer work in parallel — producer fills one buffer while consumer drains the other
+
+    private final Exchanger<List<String>> exchanger = new Exchanger<>();
+
+    // Producer thread
+    public void producerTask() throws InterruptedException {
+        List<String> fillingBuffer = new ArrayList<>();
+
+        while (true) {
+            for (int i = 0; i < 100; i++) {
+                fillingBuffer.add(readNextRecord());  // fill buffer
+            }
+            // Exchange the full buffer for an empty one from the consumer
+            fillingBuffer = exchanger.exchange(fillingBuffer);
+            // fillingBuffer is now an empty list from the consumer — continue filling
+        }
+    }
+
+    // Consumer thread
+    public void consumerTask() throws InterruptedException {
+        List<String> drainingBuffer = new ArrayList<>();
+
+        while (true) {
+            // Exchange empty buffer for the full one from producer
+            drainingBuffer = exchanger.exchange(drainingBuffer);
+            // drainingBuffer is now the full list from producer
+            for (String record : drainingBuffer) {
+                processRecord(record);
+            }
+            drainingBuffer.clear();  // clear for next exchange
+        }
+    }
+
+    // exchange() with timeout — don't wait forever if one side is slow
+    public List<String> exchangeWithTimeout(List<String> buffer) throws InterruptedException {
+        try {
+            return exchanger.exchange(buffer, 2, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            log.warn("Exchange partner did not arrive within 2 seconds");
+            return buffer;  // keep existing buffer
+        }
+    }
+}
+```
+
+---
+
+# Chapter 19: Structured Concurrency (Java 21)
+
+---
+
+## Q43 🔴 What is StructuredTaskScope in Java 21? How does it differ from CompletableFuture.allOf()?
+
+```java
+// Structured Concurrency: child threads are scoped to the parent's lifetime
+// When the parent scope closes, all subtasks are cancelled if not yet complete
+// Guarantees: no thread outlives the scope that created it — prevents leak of background threads
+
+import java.util.concurrent.StructuredTaskScope;
+
+// Pattern 1: ShutdownOnFailure — cancel all if any subtask fails
+public ProductPageData loadProductPage(Long productId) throws Exception {
+
+    try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+
+        // Fork subtasks — they run concurrently in virtual threads
+        StructuredTaskScope.Subtask<Product> productTask =
+            scope.fork(() -> productService.findById(productId));
+
+        StructuredTaskScope.Subtask<List<Review>> reviewsTask =
+            scope.fork(() -> reviewService.getReviews(productId));
+
+        StructuredTaskScope.Subtask<Inventory> inventoryTask =
+            scope.fork(() -> inventoryService.getStock(productId));
+
+        scope.join();           // wait for ALL subtasks (or any failure)
+        scope.throwIfFailed();  // if any subtask threw, rethrow here
+
+        // All succeeded — safe to call .get()
+        return new ProductPageData(
+            productTask.get(),
+            reviewsTask.get(),
+            inventoryTask.get()
+        );
+    }
+    // scope.close() called here: any still-running subtasks are cancelled
+}
+
+// Pattern 2: ShutdownOnSuccess — return the first result, cancel the rest
+// Use case: query multiple cache replicas, use whichever responds first
+public String queryFastestCache(String key) throws Exception {
+
+    try (var scope = new StructuredTaskScope.ShutdownOnSuccess<String>()) {
+
+        scope.fork(() -> redisCache.get(key));
+        scope.fork(() -> memcachedCache.get(key));
+        scope.fork(() -> localCache.get(key));
+
+        scope.join();  // returns as soon as ANY subtask succeeds
+        return scope.result();  // returns the first successful result
+    }
+    // Other in-flight subtasks are interrupted and cleaned up
+}
+
+// Pattern 3: Custom scope — apply a timeout to the entire group
+public List<ServiceStatus> checkAllServices() throws Exception {
+
+    try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+
+        var userServiceTask    = scope.fork(() -> healthCheck("user-service"));
+        var orderServiceTask   = scope.fork(() -> healthCheck("order-service"));
+        var paymentServiceTask = scope.fork(() -> healthCheck("payment-service"));
+
+        // Timeout the entire scope — all subtasks cancelled if not done within 5 seconds
+        scope.joinUntil(Instant.now().plusSeconds(5));
+        scope.throwIfFailed();
+
+        return List.of(userServiceTask.get(), orderServiceTask.get(), paymentServiceTask.get());
+    }
+}
+```
+
+```
+StructuredTaskScope vs CompletableFuture.allOf():
+  StructuredTaskScope              | CompletableFuture.allOf()
+  Structured lifetime              | Unstructured (tasks outlive scope)
+  Auto-cancels sibling tasks       | No built-in cancellation propagation
+  Child failures propagate clearly | Must chain .exceptionally() manually
+  Uses virtual threads natively    | Uses ForkJoinPool by default
+  Scope as try-with-resources      | No guaranteed cleanup
+  ShutdownOnFailure built-in       | Manual with anyOf / thenCompose
+  Java 21 preview → standard 24+  | Available since Java 8
+  Best for: structured fan-out     | Best for: async pipelines, existing code
+```
+
+> ⭐ **Apple interview insight**: StructuredTaskScope enforces the invariant that a thread cannot outlive the scope that forked it. This eliminates a class of bugs where background tasks continue running after exceptions, referencing objects that have already been garbage collected or closed.
+```
+
